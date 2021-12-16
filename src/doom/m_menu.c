@@ -191,6 +191,7 @@ menu_t*	currentMenu;
 //
 // PROTOTYPES
 //
+static void M_JoinGame(int choice);
 static void M_NewGame(int choice);
 static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
@@ -225,6 +226,7 @@ static void M_DrawMainMenu(void);
 static void M_DrawReadThis1(void);
 static void M_DrawReadThis2(void);
 static void M_DrawNewGame(void);
+static void M_DrawJoinGame(void);
 static void M_DrawEpisode(void);
 static void M_DrawOptions(void);
 static void M_DrawMouse(void); // [crispy] mouse sensitivity menu
@@ -258,6 +260,7 @@ static void M_DrawCrispness4(void);
 enum
 {
     newgame = 0,
+    joingame,
     options,
     loadgame,
     savegame,
@@ -269,6 +272,7 @@ enum
 menuitem_t MainMenu[]=
 {
     {1,"M_NGAME",M_NewGame,'n'},
+    {1,"M_MULTI",M_JoinGame,'j'},
     {1,"M_OPTION",M_Options,'o'},
     {1,"M_LOADG",M_LoadGame,'l'},
     {1,"M_SAVEG",M_SaveGame,'s'},
@@ -287,6 +291,33 @@ menu_t  MainDef =
     0
 };
 
+//
+// JOIN GAME
+//
+enum
+{
+    join,
+    netoptions,
+    nreadthis,
+    joingm_end
+} joingame_e;
+
+menuitem_t JoinGameMenu[]=
+{
+    {1,"M_JGAME", M_NewGame,'n', "Join Game"},
+    {1,"M_WADOPT", M_Options,'o', "Multiplayer Options"},
+    {1,"M_RDTHIS", M_ReadThis,'r', "Temporary README"},
+};
+
+menu_t  JoinDef =
+{
+    joingm_end,
+    &MainDef,
+    JoinGameMenu,
+    M_DrawJoinGame,
+    48,63,
+    join
+};
 
 //
 // EPISODE SELECT
@@ -1214,6 +1245,24 @@ void M_DrawMainMenu(void)
 
     V_DrawPatchDirect(94, 2,
                       W_CacheLumpName(DEH_String("M_DOOM"), PU_CACHE));
+}
+
+
+
+//
+// M_JoinGame
+//
+void M_DrawJoinGame(void)
+{
+    // [crispy] force status bar refresh
+    inhelpscreens = true;
+
+    V_DrawPatchDirect(54,38,W_CacheLumpName(DEH_String("M_MULTI"), PU_CACHE));
+}
+
+void M_JoinGame(int choice)
+{
+    M_SetupNextMenu(&JoinDef);
 }
 
 
