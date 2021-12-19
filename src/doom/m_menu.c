@@ -192,6 +192,7 @@ menu_t*	currentMenu;
 // PROTOTYPES
 //
 static void M_JoinGame(int choice);
+static void M_SessionBrowser(int choice);
 static void M_NewGame(int choice);
 static void M_Episode(int choice);
 static void M_ChooseSkill(int choice);
@@ -227,6 +228,7 @@ static void M_DrawReadThis1(void);
 static void M_DrawReadThis2(void);
 static void M_DrawNewGame(void);
 static void M_DrawJoinGame(void);
+static void M_DrawSessionBrowser(void);
 static void M_DrawEpisode(void);
 static void M_DrawOptions(void);
 static void M_DrawMouse(void); // [crispy] mouse sensitivity menu
@@ -304,9 +306,9 @@ enum
 
 menuitem_t JoinGameMenu[]=
 {
-    {1,"M_JGAME", M_NewGame,'n', "Join Game"},
-    {1,"M_WADOPT", M_Options,'o', "Multiplayer Options"},
-    {1,"M_RDTHIS", M_ReadThis,'r', "Temporary README"},
+    {1,"M_JGAME", M_NewGame,'n', "Join Game"}, //You will soon receive an actual graphic.
+    {1,"M_MSET", M_Options,'o', "Multiplayer Options"}, //Soon to be M_MSET
+    {1,"M_RDMULT", M_ReadThis,'r', "Temporary README"}, //Soon to be M_RDMULT, proper for multiplayer settings.
 };
 
 menu_t  JoinDef =
@@ -317,6 +319,36 @@ menu_t  JoinDef =
     M_DrawJoinGame,
     48,63,
     join
+};
+
+//
+//SESSION BROWSER
+//
+enum
+{
+    connect,
+    sort,
+    lists,
+    actions,
+    sess_end
+} sessionbrowser_e;
+
+menuitem_t SessionBrowserMenu[]=
+{
+    {},
+    {},
+    {},
+    {},
+}
+
+menu_t SessDef =
+{
+    sess_end,
+    &JoinDef,
+    SessionBrowserMenu,
+    M_DrawSessionBrowser,
+    20,54,
+    connect
 };
 
 //
