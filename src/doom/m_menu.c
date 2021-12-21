@@ -306,7 +306,7 @@ enum
 
 menuitem_t JoinGameMenu[]=
 {
-    {1,"M_JGAME", M_NewGame,'n', "Join Game"}, //You will soon receive an actual graphic.
+    {1,"M_JGAME", M_SessionBrowser,'n', "Join Game"}, //You will soon receive an actual graphic.
     {1,"M_MSET", M_Options,'o', "Multiplayer Options"}, //Soon to be M_MSET
     {1,"M_RDMULT", M_ReadThis,'r', "Temporary README"}, //Soon to be M_RDMULT, proper for multiplayer settings.
 };
@@ -330,15 +330,17 @@ enum
     sort,
     lists,
     actions,
+    sessreturn,
     sess_end
 } sessionbrowser_e;
 
 menuitem_t SessionBrowserMenu[]=
 {
-    {},
-    {},
-    {},
-    {},
+    {1,"M_CON", M_ConnectNet,'c'},
+    {1,"M_SORT", M_SessSort,'s'},
+    {1,"M_LISTS", M_SessLists,'l'},
+    {1,"M_ACTION", M_SessAction,'a'},
+    {1,"M_RETURN", M_SessReturn,'r'}
 }
 
 menu_t SessDef =
@@ -1298,7 +1300,16 @@ void M_JoinGame(int choice)
 }
 
 
+//
+//M_SessionBrowser
+//
+void M_DrawSessionBrowser(void)
+{
+    inhelpscreens = true;
 
+    V_DrawPatchDirect(96,14,W_CacheLumpName(DEH_String("M_SBROW"), PU_CACHE));
+    //M_WriteText();
+}
 
 //
 // M_NewGame
