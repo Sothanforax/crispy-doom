@@ -204,6 +204,12 @@ static void M_ReadThis(int choice);
 static void M_ReadThis2(int choice);
 static void M_QuitDOOM(int choice);
 
+static void M_ConnectNet(int choice);
+static void M_SessSort(int choice);
+static void M_SessLists(int choice);
+static void M_SessAction(int choice);
+static void M_SessReturn(int choice);
+
 static void M_ChangeMessages(int choice);
 static void M_ChangeSensitivity(int choice);
 static void M_ChangeSensitivity_x2(int choice); // [crispy] mouse sensitivity menu
@@ -341,7 +347,7 @@ menuitem_t SessionBrowserMenu[]=
     {1,"M_LISTS", M_SessLists,'l'},
     {1,"M_ACTION", M_SessAction,'a'},
     {1,"M_RETURN", M_SessReturn,'r'}
-}
+};
 
 menu_t SessDef =
 {
@@ -1296,7 +1302,7 @@ void M_DrawJoinGame(void)
 
 void M_JoinGame(int choice)
 {
-    M_SetupNextMenu(&JoinDef);
+    M_SetupNextMenu(&SessDef);
 }
 
 
@@ -1310,6 +1316,33 @@ void M_DrawSessionBrowser(void)
     V_DrawPatchDirect(96,14,W_CacheLumpName(DEH_String("M_SBROW"), PU_CACHE));
     //M_WriteText();
 }
+
+void M_SessionBrowser(int choice)
+{
+    //logic stuffs soon(TM)
+}
+
+void M_ConnectNet(int choice)
+{
+}
+
+void M_SessSort(int choice)
+{
+}
+
+void M_SessLists(int choice)
+{
+}
+
+void M_SessAction(int choice)
+{
+}
+
+void M_SessReturn(int choice)
+{
+    M_SetupNextMenu(&JoinDef);
+}
+
 
 //
 // M_NewGame
