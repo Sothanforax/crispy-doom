@@ -1302,7 +1302,7 @@ void M_DrawJoinGame(void)
 
 void M_JoinGame(int choice)
 {
-    M_SetupNextMenu(&SessDef);
+    M_SetupNextMenu(&JoinDef);
 }
 
 
@@ -1319,7 +1319,7 @@ void M_DrawSessionBrowser(void)
 
 void M_SessionBrowser(int choice)
 {
-    //logic stuffs soon(TM)
+    M_SetupNextMenu(&SessDef);
 }
 
 void M_ConnectNet(int choice)
