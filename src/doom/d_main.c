@@ -65,6 +65,7 @@
 #include "a11y.h" // [crispy] A11Y
 
 #include "hu_stuff.h"
+#include "v_snow.h"
 #include "wi_stuff.h"
 #include "st_stuff.h"
 #include "am_map.h"
@@ -308,6 +309,16 @@ boolean D_Display (void)
 	inhelpscreensstate = true;
     }
 
+    // [crispy] Snow
+    if (crispy->snowflakes)
+    {
+	V_SnowDraw();
+
+	// [crispy] force redraw of status bar and border
+	viewactivestate = false;
+	inhelpscreensstate = true;
+    }
+
     // [crispy] draw neither pause pic nor menu when taking a clean screenshot
     if (crispy->cleanscreenshot)
     {
@@ -411,6 +422,7 @@ void D_BindVariables(void)
 //  M_BindIntVariable("vanilla_savegame_limit", &vanilla_savegame_limit);
 //  M_BindIntVariable("vanilla_demo_limit",     &vanilla_demo_limit);
     M_BindIntVariable("a11y_sector_lighting",   &a11y_sector_lighting);
+    M_BindIntVariable("a11y_extra_lighting",    &a11y_extra_lighting);
     M_BindIntVariable("a11y_weapon_flash",      &a11y_weapon_flash);
     M_BindIntVariable("a11y_weapon_pspr",       &a11y_weapon_pspr);
     M_BindIntVariable("a11y_palette_changes",   &a11y_palette_changes);
@@ -465,6 +477,7 @@ void D_BindVariables(void)
     M_BindIntVariable("crispy_soundfix",        &crispy->soundfix);
     M_BindIntVariable("crispy_soundfull",       &crispy->soundfull);
     M_BindIntVariable("crispy_soundmono",       &crispy->soundmono);
+    M_BindIntVariable("crispy_statsformat",     &crispy->statsformat);
     M_BindIntVariable("crispy_translucency",    &crispy->translucency);
 #ifdef CRISPY_TRUECOLOR
     M_BindIntVariable("crispy_truecolor",       &crispy->truecolor);
@@ -1379,7 +1392,7 @@ void D_DoomMain (void)
 {
     int p;
     char file[256];
-    char demolumpname[9];
+    char demolumpname[9] = {0};
     int numiwadlumps;
 
     // [crispy] unconditionally initialize DEH tables
@@ -1909,7 +1922,7 @@ void D_DoomMain (void)
     W_GenerateHashTable();
 
     // [crispy] allow overriding of special-casing
-    if (!M_ParmExists("-nosideload") && gamemode != shareware)
+    if (!M_ParmExists("-nosideload") && gamemode != shareware && !demolumpname[0])
     {
 	if (gamemode == retail &&
 	    gameversion == exe_ultimate &&

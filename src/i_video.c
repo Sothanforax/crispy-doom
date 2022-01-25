@@ -136,15 +136,6 @@ int video_display = 0;
 int window_width = 800;
 int window_height = 600;
 
-typedef enum
-{
-    cs_WIDTH_AND_HEIGHT = 0,
-    cs_WIDTH,
-    cs_HEIGHT
-} changedSize_t;
-
-static changedSize_t changedWindowSize = cs_WIDTH_AND_HEIGHT;
-
 // Fullscreen mode, 0x0 for SDL_WINDOW_FULLSCREEN_DESKTOP.
 
 int fullscreen_width = 0, fullscreen_height = 0;
@@ -324,28 +315,36 @@ static void AdjustWindowSize(void)
 {
     if (aspect_ratio_correct || integer_scaling)
     {
-        switch(changedWindowSize)
+        static int old_v_w, old_v_h;
+
+        if (old_v_w > 0 && old_v_h > 0)
         {
-            case cs_WIDTH:
-                window_height = (window_width * actualheight + SCREENWIDTH - 1) / SCREENWIDTH;
-                break;
-            case cs_HEIGHT:
-                window_width = window_height * SCREENWIDTH / actualheight;
-                break;
-            default:
-                if(window_width * actualheight <= window_height * SCREENWIDTH)
-                {
-                    // We round up window_height if the ratio is not exact; this leaves
-                    // the result stable.
-                    window_height = (window_width * actualheight + SCREENWIDTH - 1) / SCREENWIDTH;
-                }
-                else
-                {
-                    window_width = window_height * SCREENWIDTH / actualheight;
-                }
+          int rendered_height;
+
+          // rendered height does not necessarily match window height
+          if (window_height * old_v_w > window_width * old_v_h)
+            rendered_height = (window_width * old_v_h + old_v_w - 1) / old_v_w;
+          else
+            rendered_height = window_height;
+
+          window_width = rendered_height * SCREENWIDTH / actualheight;
         }
+
+        old_v_w = SCREENWIDTH;
+        old_v_h = actualheight;
+#if 0
+        if (window_width * actualheight <= window_height * SCREENWIDTH)
+        {
+            // We round up window_height if the ratio is not exact; this leaves
+            // the result stable.
+            window_height = (window_width * actualheight + SCREENWIDTH - 1) / SCREENWIDTH;
+        }
+        else
+        {
+            window_width = window_height * SCREENWIDTH / actualheight;
+        }
+#endif
     }
-    changedWindowSize = cs_WIDTH_AND_HEIGHT;
 }
 
 static void HandleWindowEvent(SDL_WindowEvent *event)
@@ -366,12 +365,6 @@ static void HandleWindowEvent(SDL_WindowEvent *event)
 
         case SDL_WINDOWEVENT_RESIZED:
             need_resize = true;
-            if(window_width == event->data1 && window_height != event->data2)
-                changedWindowSize = cs_HEIGHT;
-            else if(window_width != event->data1 && window_height == event->data2)
-                changedWindowSize = cs_WIDTH;
-            else
-                changedWindowSize = cs_WIDTH_AND_HEIGHT;
             last_resize_time = SDL_GetTicks();
             break;
 
@@ -416,24 +409,6 @@ static void HandleWindowEvent(SDL_WindowEvent *event)
         default:
             break;
     }
-}
-
-// -----------------------------------------------------------------------------
-// HandleWindowResize
-// [JN] Updates window contents (SDL texture) on fly while resizing.
-// SDL_WINDOWEVENT_RESIZED from above is still needed to get rid of
-// black borders after window size has been changed.
-// -----------------------------------------------------------------------------
-
-static int HandleWindowResize (void* data, SDL_Event *event)
-{
-    if (event->type == SDL_WINDOWEVENT
-    &&  event->window.event == SDL_WINDOWEVENT_RESIZED)
-    {
-        // Redraw window contents
-        I_FinishUpdate();
-    }
-    return 0;
 }
 
 static boolean ToggleFullScreenKeyShortcut(SDL_Keysym *sym)
@@ -783,15 +758,11 @@ void I_FinishUpdate (void)
             flags = SDL_GetWindowFlags(screen);
             if ((flags & SDL_WINDOW_FULLSCREEN_DESKTOP) == 0)
             {
-                int old_height;
                 SDL_GetWindowSize(screen, &window_width, &window_height);
-                old_height = window_height;
 
                 // Adjust the window by resizing again so that the window
                 // is the right aspect ratio.
                 AdjustWindowSize();
-                if (window_height < old_height)
-                    window_height = old_height;
                 SDL_SetWindowSize(screen, window_width, window_height);
             }
             CreateUpscaledTexture(false);
@@ -1567,6 +1538,18 @@ static void SetVideoMode(void)
                                 SDL_TEXTUREACCESS_STREAMING,
                                 SCREENWIDTH, SCREENHEIGHT);
 
+    // Workaround for SDL 2.0.14+ alt-tab bug (taken from Doom Retro via Prboom-plus and Woof)
+#if defined(_WIN32)
+    {
+        SDL_version ver;
+        SDL_GetVersion(&ver);
+        if (ver.major == 2 && ver.minor == 0 && (ver.patch == 14 || ver.patch == 16))
+        {
+           SDL_SetHintWithPriority(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS, "1", SDL_HINT_OVERRIDE);
+        }
+    }
+#endif
+
     // Initially create the upscaled texture for rendering to screen
 
     CreateUpscaledTexture(true);
@@ -1653,10 +1636,6 @@ void I_InitGraphics(void)
     }
 
     SetSDLVideoDriver();
-
-    // [JN] Set an event watcher for window resize to allow
-    // update window contents on fly.
-    SDL_AddEventWatch(HandleWindowResize, screen);
 
     if (SDL_Init(SDL_INIT_VIDEO) < 0) 
     {

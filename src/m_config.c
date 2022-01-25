@@ -452,6 +452,12 @@ static default_t	doom_defaults_list[] =
     CONFIG_VARIABLE_KEY(key_speed),
 
     //!
+    // Keyboard key to fast-forward through a demo.
+    //
+
+    CONFIG_VARIABLE_KEY(key_demospeed),
+
+    //!
     // If non-zero, mouse input is enabled.  If zero, mouse input is
     // disabled.
     //
@@ -1060,6 +1066,12 @@ static default_t extra_defaults_list[] =
     //
 
     CONFIG_VARIABLE_INT(a11y_sector_lighting),
+
+    //!
+    // Amount of extra light to add to the game scene.
+    //
+
+    CONFIG_VARIABLE_INT(a11y_extra_lighting),
 
     //!
     // If zero, this disables weapon flashes changing the ambient light
@@ -2226,6 +2238,14 @@ static default_t extra_defaults_list[] =
     //
 
     CONFIG_VARIABLE_INT(crispy_soundmono),
+
+    //!
+    // @game doom
+    //
+    // Level Stats Format.
+    //
+
+    CONFIG_VARIABLE_INT(crispy_statsformat),
 
     //!
     // @game doom

@@ -72,6 +72,7 @@ typedef struct
 	int soundfix;
 	int soundfull;
 	int soundmono;
+	int statsformat;
 	int translucency;
 #ifdef CRISPY_TRUECOLOR
 	int truecolor;
@@ -82,6 +83,7 @@ typedef struct
 
 	// [crispy] in-game switches and variables
 	int screenshotmsg;
+	int snowflakes;
 	int cleanscreenshot;
 	int demowarp;
 	int fps;
@@ -219,6 +221,15 @@ enum
     WIDGETS_AUTOMAP,
     WIDGETS_ALWAYS,
     NUM_WIDGETS
+};
+
+enum
+{
+    STATSFORMAT_RATIO,
+    STATSFORMAT_REMAINING,
+    STATSFORMAT_PERCENT,
+    STATSFORMAT_BOOLEAN,
+    NUM_STATSFORMATS
 };
 
 enum
