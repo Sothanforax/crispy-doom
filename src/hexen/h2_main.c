@@ -194,6 +194,9 @@ void D_BindVariables(void)
     }
 
     // [crispy] bind "crispness" config variables
+    M_BindIntVariable("crispy_hires",           &crispy->hires);
+    M_BindIntVariable("crispy_smoothscaling",   &crispy->smoothscaling);
+    M_BindIntVariable("crispy_vsync",           &crispy->vsync);
     M_BindIntVariable("crispy_widescreen",      &crispy->widescreen);
 }
 
@@ -441,6 +444,35 @@ void D_DoomMain(void)
     D_IdentifyVersion();
     D_SetGameDescription();
     AdjustForMacIWAD();
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Mana pickups give 50% more mana. This option is not allowed when recording a
+    // demo, playing back a demo or when starting a network game.
+    //
+
+    crispy->moreammo = M_ParmExists("-moremana");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Fast monsters. This option is not allowed when recording a demo,
+    // playing back a demo or when starting a network game.
+    //
+
+    crispy->fast = M_ParmExists("-fast");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Automatic use of Quartz flasks and Mystic urns.
+    //
+
+    crispy->autohealth = M_ParmExists("-autohealth");
 
     //!
     // @category mod
@@ -819,6 +851,33 @@ static void WarpCheck(void)
 
 void H2_GameLoop(void)
 {
+    // [crispy] update the "singleplayer" variable
+    CheckCrispySingleplayer(!demorecording && gameaction != ga_playdemo && !netgame);
+
+    if (!crispy->singleplayer)
+    {
+        int i;
+
+        const struct {
+            boolean feature;
+            const char *option;
+        } custom_options[] = {
+            {crispy->moreammo,   "-moremana"},
+            {crispy->fast,       "-fast"},
+            {crispy->autohealth, "-autohealth"},
+        };
+
+        for (i = 0; i < arrlen(custom_options); i++)
+        {
+            if (custom_options[i].feature)
+            {
+                I_Error("The %s option is not supported\n"
+                        "for demos and network play.",
+                        custom_options[i].option);
+            }
+        }
+    }
+
     if (M_CheckParm("-debugfile"))
     {
         char filename[20];
@@ -843,6 +902,15 @@ void H2_GameLoop(void)
         S_UpdateSounds(players[displayplayer].mo);
 
         DrawAndBlit();
+
+        // [crispy] post-rendering function pointer to apply config changes
+        // that affect rendering and that are better applied after the current
+        // frame has finished rendering
+        if (crispy->post_rendering_hook)
+        {
+            crispy->post_rendering_hook();
+            crispy->post_rendering_hook = NULL;
+        }
     }
 }
 

@@ -196,6 +196,13 @@ int testcontrols_mousespeed;
 extern boolean inventory;
 boolean usearti = true;
 
+static boolean speedkeydown (void)
+{
+    return (key_speed < NUMKEYS && gamekeydown[key_speed]) ||
+           (joybspeed < MAX_JOY_BUTTONS && joybuttons[joybspeed]) ||
+           (mousebspeed < MAX_MOUSE_BUTTONS && mousebuttons[mousebspeed]);
+}
+
 void G_BuildTiccmd(ticcmd_t *cmd, int maketic)
 {
     int i;
@@ -226,10 +233,9 @@ void G_BuildTiccmd(ticcmd_t *cmd, int maketic)
 
     // Allow joybspeed hack.
 
-    speed = key_speed >= NUMKEYS
-        || joybspeed >= MAX_JOY_BUTTONS
-        || gamekeydown[key_speed]
-        || joybuttons[joybspeed];
+    speed = (key_speed >= NUMKEYS
+        || joybspeed >= MAX_JOY_BUTTONS);
+    speed ^= speedkeydown();
 
     // haleyjd: removed externdriver crap
     
@@ -955,6 +961,8 @@ void G_Ticker(void)
 //
     while (gameaction != ga_nothing)
     {
+        // [crispy] check if we are in the demo reel
+        CheckCrispySingleplayer(!demorecording && gameaction != ga_playdemo && !netgame);
         switch (gameaction)
         {
             case ga_loadlevel:

@@ -1111,7 +1111,6 @@ void M_SaveGame (int choice)
 //
 //      M_QuickSave
 //
-static char tempstring[90];
 
 void M_QuickSaveResponse(int key)
 {
@@ -1141,9 +1140,7 @@ void M_QuickSave(void)
 	quickSaveSlot = -2;	// means to pick a slot now
 	return;
     }
-    DEH_snprintf(tempstring, sizeof(tempstring),
-                 QSPROMPT, savegamestrings[quickSaveSlot]);
-    M_StartMessage(tempstring, M_QuickSaveResponse, true);
+    M_QuickSaveResponse(key_menu_confirm);
 }
 
 
@@ -1179,9 +1176,7 @@ void M_QuickLoad(void)
 	quickSaveSlot = -2;
 	return;
     }
-    DEH_snprintf(tempstring, sizeof(tempstring),
-                 QLPROMPT, savegamestrings[quickSaveSlot]);
-    M_StartMessage(tempstring, M_QuickLoadResponse, true);
+    M_QuickLoadResponse(key_menu_confirm);
 }
 
 
@@ -1391,7 +1386,13 @@ void M_DrawEpisode(void)
     // [crispy] force status bar refresh
     inhelpscreens = true;
 
+    if (W_CheckNumForName(DEH_String("M_EPISOD")) != -1)
     V_DrawPatchDirect(54, 38, W_CacheLumpName(DEH_String("M_EPISOD"), PU_CACHE));
+    else
+    {
+      M_WriteText(54, 38, "Which Episode?");
+      EpiDef.lumps_missing = 1;
+    }
 }
 
 void M_VerifyNightmare(int key)
@@ -3411,6 +3412,9 @@ static void M_ConfirmDeleteGameResponse (int key)
 
 		M_StringCopy(name, P_SaveGameFile(itemOn), sizeof(name));
 		remove(name);
+
+		if (itemOn == quickSaveSlot)
+			quickSaveSlot = -1;
 
 		M_ReadSaveStrings();
 	}

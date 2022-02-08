@@ -342,6 +342,34 @@ boolean D_GrabMouseCallback(void)
 
 void D_DoomLoop(void)
 {
+    // [crispy] update the "singleplayer" variable
+    CheckCrispySingleplayer(!demorecording && gameaction != ga_playdemo && !netgame);
+
+    if (!crispy->singleplayer)
+    {
+        int i;
+
+        const struct {
+            boolean feature;
+            const char *option;
+        } custom_options[] = {
+            {crispy->moreammo,   "-moreammo"},
+            {crispy->fast,       "-fast"},
+            {crispy->pistolstart, "-wandstart"},
+            {crispy->autohealth, "-autohealth"},
+        };
+
+        for (i = 0; i < arrlen(custom_options); i++)
+        {
+            if (custom_options[i].feature)
+            {
+                I_Error("The %s option is not supported\n"
+                        "for demos and network play.",
+                        custom_options[i].option);
+            }
+        }
+    }
+
     if (M_CheckParm("-debugfile"))
     {
         char filename[20];
@@ -1045,6 +1073,44 @@ void D_DoomMain(void)
     //
 
     crispy->pistolstart = M_ParmExists("-wandstart");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Ammo pickups give 50% more ammo. This option is not allowed when recording a
+    // demo, playing back a demo or when starting a network game.
+    //
+
+    crispy->moreammo = M_ParmExists("-moreammo");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Fast monsters. This option is not allowed when recording a demo,
+    // playing back a demo or when starting a network game.
+    //
+
+    crispy->fast = M_ParmExists("-fast");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Automatic use of Quartz flasks and Mystic urns.
+    //
+
+    crispy->autohealth = M_ParmExists("-autohealth");
+
+    //!
+    // @category game
+    // @category mod
+    //
+    // Show the location of keys on the automap.
+    //
+
+    crispy->keysloc = M_ParmExists("-keysloc");
 
     //!
     // @category mod

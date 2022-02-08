@@ -94,6 +94,14 @@ Many additional less user-visible features have been implemented, e.g. fixed eng
  * `-fliplevels` loads mirrored versions of the maps (this was the default on April 1st up to version 5.0).
  * `-flipweapons` flips the player's weapons (new in 5.3).
  * `-levelstat` prints a levelstat.txt file with statistics for each completed level (new in 5.9.0).
+ * `-pistolstart` reset health, armor and inventory at start of each level in Doom (new in 5.9.2)
+ * `-wandstart` reset health, armor and inventory at start of each level in Heretic (new in 5.9.2)
+ * `-doubleammo` doubles ammo pickup rate in Doom and Strife (new in 5.11).
+ * `-moreammo` increases ammo pickup rate by 50% in Heretic (new in 5.11).
+ * `-moremana` increases mana pickup rate by 50% in Hexen (new in 5.11).
+ * `-fast` enables fast monsters in Heretic and Hexen (new in 5.11).
+ * `-autohealth` enables automatic use of Quartz flasks and Mystic urns in Heretic and Hexen (new in 5.11).
+ * `-keysloc` enables display of keys on the automap in Heretic (new in 5.11).
 
 ### New cheat codes
 

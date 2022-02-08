@@ -334,7 +334,8 @@ static int G_NextWeapon(int direction)
 boolean speedkeydown (void)
 {
     return (key_speed < NUMKEYS && gamekeydown[key_speed]) ||
-           (joybspeed < MAX_JOY_BUTTONS && joybuttons[joybspeed]);
+           (joybspeed < MAX_JOY_BUTTONS && joybuttons[joybspeed]) ||
+           (mousebspeed < MAX_MOUSE_BUTTONS && mousebuttons[mousebspeed]);
 }
 
 //
@@ -370,8 +371,8 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
 
     // [crispy] when "always run" is active,
     // pressing the "run" key will result in walking
-    speed = key_speed >= NUMKEYS
-         || joybspeed >= MAX_JOY_BUTTONS;
+    speed = (key_speed >= NUMKEYS
+         || joybspeed >= MAX_JOY_BUTTONS);
     speed ^= speedkeydown();
  
     forward = side = look = 0;
@@ -431,7 +432,7 @@ void G_BuildTiccmd (ticcmd_t* cmd, int maketic)
         else
         {
             joybspeed_old = joybspeed;
-            joybspeed = 29;
+            joybspeed = MAX_JOY_BUTTONS;
         }
 
         M_snprintf(playermessage, sizeof(playermessage), "ALWAYS RUN %s%s",
@@ -870,6 +871,16 @@ void G_DoLoadLevel (void)
 		 
     // [crispy] update the "singleplayer" variable
     CheckCrispySingleplayer(!demorecording && !demoplayback && !netgame);
+
+    // [crispy] double ammo
+    if (crispy->moreammo && !crispy->singleplayer)
+    {
+        const char message[] = "The -doubleammo option is not supported"
+                               " for demos and\n"
+                               " network play.";
+        if (!demo_p) demorecording = false;
+        I_Error(message);
+    }
 
     // [crispy] pistol start
     if (crispy->pistolstart)

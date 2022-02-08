@@ -64,7 +64,6 @@ typedef struct
 	int overunder;
 	int pitch;
 	int playercoords;
-	int recoil;
 	int secretmessage;
 	int smoothlight;
 	int smoothmap;
@@ -95,9 +94,15 @@ typedef struct
 	boolean havee1m10;
 	boolean havemap33;
 	boolean havessg;
-	boolean pistolstart;
 	boolean singleplayer;
 	boolean stretchsky;
+
+	// [crispy] custom difficulty parameters
+	boolean autohealth;
+	boolean fast;
+	boolean keysloc;
+	boolean moreammo;
+	boolean pistolstart;
 
 	char *havenerve;
 	char *havemaster;
