@@ -73,9 +73,43 @@ boolean P_SetMobjState(mobj_t * mobj, statenum_t state)
     mobj->frame = st->frame;
     if (st->action)
     {                           // Call action function
-        st->action(mobj);
+        st->action(mobj, NULL, NULL);
     }
     return (true);
+}
+
+// [crispy] return the latest "safe" state in a state sequence,
+// so that no action pointer is ever called
+static statenum_t P_LatestSafeState(statenum_t state)
+{
+    statenum_t safestate = S_NULL;
+    static statenum_t laststate, lastsafestate;
+
+    if (state == laststate)
+    {
+        return lastsafestate;
+    }
+
+    for (laststate = state; state != S_NULL; state = states[state].nextstate)
+    {
+        if (safestate == S_NULL)
+        {
+            safestate = state;
+        }
+
+        if (states[state].action)
+        {
+            safestate = S_NULL;
+        }
+
+        // [crispy] a state with -1 tics never changes
+        if (states[state].tics == -1 || state == states[state].nextstate)
+        {
+            break;
+        }
+    }
+
+    return lastsafestate = safestate;
 }
 
 //----------------------------------------------------------------------------
@@ -110,7 +144,7 @@ boolean P_SetMobjStateNF(mobj_t * mobj, statenum_t state)
 //
 //----------------------------------------------------------------------------
 
-void P_ExplodeMissile(mobj_t * mo)
+static void P_ExplodeMissileSafe(mobj_t * mo, boolean safe)
 {
     if (mo->type == MT_WHIRLWIND)
     {
@@ -120,13 +154,18 @@ void P_ExplodeMissile(mobj_t * mo)
         }
     }
     mo->momx = mo->momy = mo->momz = 0;
-    P_SetMobjState(mo, mobjinfo[mo->type].deathstate);
+    P_SetMobjState(mo, safe ? P_LatestSafeState(mobjinfo[mo->type].deathstate) : (statenum_t)mobjinfo[mo->type].deathstate);
     //mo->tics -= P_Random()&3;
     mo->flags &= ~MF_MISSILE;
     if (mo->info->deathsound)
     {
         S_StartSound(mo, mo->info->deathsound);
     }
+}
+
+void P_ExplodeMissile(mobj_t * mo)
+{
+    P_ExplodeMissileSafe(mo, false);
 }
 
 //----------------------------------------------------------------------------
@@ -361,6 +400,7 @@ void P_XYMovement(mobj_t * mo)
             }
             else if (mo->flags & MF_MISSILE)
             {                   // Explode a missile
+                boolean safe = false;
                 if (ceilingline && ceilingline->backsector
                     && ceilingline->backsector->ceilingpic == skyflatnum)
                 {               // Hack to prevent missiles exploding against the sky
@@ -369,13 +409,17 @@ void P_XYMovement(mobj_t * mo)
                         mo->momx = mo->momy = 0;
                         mo->momz = -FRACUNIT;
                     }
-                    else
+                    if (mo->z > ceilingline->backsector->ceilingheight)
                     {
                         P_RemoveMobj(mo);
+                        return;
                     }
-                    return;
+                    else
+                    {
+                        safe = true;
+                    }
                 }
-                P_ExplodeMissile(mo);
+                P_ExplodeMissileSafe(mo, safe);
             }
             //else if(mo->info->crashstate)
             //{
@@ -668,8 +712,9 @@ void P_NightmareRespawn(mobj_t * mobj)
 //
 //----------------------------------------------------------------------------
 
-void P_BlasterMobjThinker(mobj_t * mobj)
+void P_BlasterMobjThinker(thinker_t *thinker)
 {
+    mobj_t *mobj = (mobj_t *) thinker;
     int i;
     fixed_t xfrac;
     fixed_t yfrac;
@@ -739,8 +784,9 @@ void P_BlasterMobjThinker(mobj_t * mobj)
 //
 //----------------------------------------------------------------------------
 
-void P_MobjThinker(mobj_t * mobj)
+void P_MobjThinker(thinker_t *thinker)
 {
+    mobj_t *mobj = (mobj_t *) thinker;
     mobj_t *onmo;
 
     // [crispy] suppress interpolation of player missiles for the first tic
@@ -870,7 +916,7 @@ void P_MobjThinker(mobj_t * mobj)
 ===============
 */
 
-mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type)
+static mobj_t *P_SpawnMobjSafe(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type, boolean safe)
 {
     mobj_t *mobj;
     state_t *st;
@@ -894,12 +940,12 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type)
     {
         mobj->reactiontime = info->reactiontime;
     }
-    mobj->lastlook = P_Random() % MAXPLAYERS;
+    mobj->lastlook = safe ? Crispy_Random () % MAXPLAYERS : P_Random () % MAXPLAYERS;
 
     // Set the state, but do not use P_SetMobjState, because action
     // routines can't be called yet.  If the spawnstate has an action
     // routine, it will not be called.
-    st = &states[info->spawnstate];
+    st = &states[safe ? P_LatestSafeState(info->spawnstate) : (statenum_t)info->spawnstate];
     mobj->state = st;
     mobj->tics = st->tics;
     mobj->sprite = st->sprite;
@@ -960,6 +1006,11 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type)
     return (mobj);
 }
 
+mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type)
+{
+    return P_SpawnMobjSafe(x, y, z, type, false);
+}
+
 /*
 ===============
 =
@@ -997,7 +1048,6 @@ void P_SpawnPlayer(mapthing_t * mthing)
     fixed_t x, y, z;
     mobj_t *mobj;
     int i;
-    extern int playerkeys;
 
     if (!playeringame[mthing->type - 1])
         return;                 // not playing
@@ -1033,10 +1083,11 @@ void P_SpawnPlayer(mapthing_t * mthing)
     p->extralight = 0;
     p->fixedcolormap = 0;
     p->viewheight = VIEWHEIGHT;
+    pspr_interp = false; // [crispy]
     P_SetupPsprites(p);         // setup gun psprite        
     if (deathmatch)
     {                           // Give all keys in death match mode
-        for (i = 0; i < NUMKEYS; i++)
+        for (i = 0; i < NUM_KEY_TYPES; i++)
         {
             p->keys[i] = true;
             if (p == &players[consoleplayer])
@@ -1108,7 +1159,7 @@ void P_SpawnMapThing(mapthing_t * mthing)
     }
 
 // check for appropriate skill level
-    if (!netgame && (mthing->options & 16))
+    if (!coop_spawns && !netgame && (mthing->options & 16))
         return;
 
     if (gameskill == sk_baby)
@@ -1126,8 +1177,12 @@ void P_SpawnMapThing(mapthing_t * mthing)
             break;
 
     if (i == NUMMOBJTYPES)
-        I_Error("P_SpawnMapThing: Unknown type %i at (%i, %i)", mthing->type,
-                mthing->x, mthing->y);
+    {
+        // [crispy] ignore unknown map things
+        printf("P_SpawnMapThing: Unknown type %i at (%i, %i)\n", mthing->type,
+               mthing->x, mthing->y);
+        return;
+    }
 
 // don't spawn keys and players in deathmatch
     if (deathmatch && mobjinfo[i].flags & MF_NOTDMATCH)
@@ -1219,14 +1274,13 @@ void P_SpawnMapThing(mapthing_t * mthing)
 //
 //---------------------------------------------------------------------------
 
-extern fixed_t attackrange;
 
-void P_SpawnPuff(fixed_t x, fixed_t y, fixed_t z)
+void P_SpawnPuffSafe(fixed_t x, fixed_t y, fixed_t z, boolean safe)
 {
     mobj_t *puff;
 
-    z += (P_SubRandom() << 10);
-    puff = P_SpawnMobj(x, y, z, PuffType);
+    z += safe ? (Crispy_SubRandom() << 10) : (P_SubRandom() << 10);
+    puff = P_SpawnMobjSafe(x, y, z, PuffType, safe);
     if (puff->info->attacksound)
     {
         S_StartSound(puff, puff->info->attacksound);
@@ -1245,6 +1299,11 @@ void P_SpawnPuff(fixed_t x, fixed_t y, fixed_t z)
     }
     // [crispy] suppress interpolation for the first tic
     puff->interp = -1;
+}
+
+void P_SpawnPuff(fixed_t x, fixed_t y, fixed_t z)
+{
+    P_SpawnPuffSafe(x, y, z, false);
 }
 
 /*
@@ -1648,7 +1707,7 @@ mobj_t *P_SPMAngle(mobj_t * source, mobjtype_t type, angle_t angle)
 //
 //---------------------------------------------------------------------------
 
-void A_ContMobjSound(mobj_t * actor)
+void A_ContMobjSound(mobj_t * actor, player_t *player, pspdef_t *psp)
 {
     switch (actor->type)
     {

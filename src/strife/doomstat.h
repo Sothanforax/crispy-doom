@@ -38,6 +38,7 @@
 
 #include "net_defs.h"
 
+#include "crispy.h"
 
 
 // ------------------------
@@ -183,6 +184,9 @@ extern  boolean	demoplayback;
 extern  boolean	demorecording;
 extern  int     mouse_fire_countdown;   // villsa [STRIFE]
 
+extern fixed_t forwardmove[2];
+extern fixed_t sidemove[2];
+
 // Round angleturn in ticcmds to the nearest 256.  This is used when
 // recording Vanilla demos in netgames.
 
@@ -253,6 +257,8 @@ extern  boolean         precache;
 extern  gamestate_t     wipegamestate;
 
 extern  int             mouseSensitivity;
+extern  int             mouseSensitivity_x2; // [crispy]
+extern  int             mouseSensitivity_y; // [crispy]
 
 //extern  int             bodyqueslot; [STRIFE] unused
 

@@ -255,16 +255,20 @@ void R_ClearClipSegs (void)
 void R_MaybeInterpolateSector(sector_t* sector)
 {
     if (crispy->uncapped &&
-        // Only if we moved the sector last tic.
-        sector->oldgametic == gametic - 1)
+        // Only if we moved the sector last tic ...
+        sector->oldgametic == gametic - 1 &&
+        // ... and it has a thinker associated with it.
+        sector->specialdata)
     {
         // Interpolate between current and last floor/ceiling position.
         if (sector->floorheight != sector->oldfloorheight)
-            sector->interpfloorheight = sector->oldfloorheight + FixedMul(sector->floorheight - sector->oldfloorheight, fractionaltic);
+            sector->interpfloorheight =
+                LerpFixed(sector->oldfloorheight, sector->floorheight);
         else
             sector->interpfloorheight = sector->floorheight;
         if (sector->ceilingheight != sector->oldceilingheight)
-            sector->interpceilingheight = sector->oldceilingheight + FixedMul(sector->ceilingheight - sector->oldceilingheight, fractionaltic);
+            sector->interpceilingheight =
+                LerpFixed(sector->oldceilingheight, sector->ceilingheight);
         else
             sector->interpceilingheight = sector->ceilingheight;
     }

@@ -29,6 +29,8 @@
 #include "i_system.h"
 #include "i_video.h"
 #include "v_video.h"
+#include "am_map.h"
+
 
 typedef enum
 {
@@ -102,7 +104,6 @@ static fixed_t dSlideY[MAXPLAYERS];
 
 static const char *KillersText[] = { "K", "I", "L", "L", "E", "R", "S" };
 
-extern const char *LevelNames[];
 
 typedef struct
 {
@@ -173,11 +174,14 @@ static const char *NameForMap(int map)
 //
 //========================================================================
 
-extern void AM_Stop(void);
 
 void IN_Start(void)
 {
+#ifndef CRISPY_TRUECOLOR
     I_SetPalette(W_CacheLumpName(DEH_String("PLAYPAL"), PU_CACHE));
+#else
+    I_SetPalette(0);
+#endif
     IN_LoadPics();
     IN_InitStats();
     intermission = true;
@@ -614,28 +618,15 @@ void IN_Drawer(void)
 
 void IN_DrawStatBack(void)
 {
-    int x;
-    int y;
 
     byte *src;
-    byte *dest;
+    pixel_t *dest;
 
     src = W_CacheLumpName(DEH_String("FLOOR16"), PU_CACHE);
     dest = I_VideoBuffer;
 
-    for (y = 0; y < SCREENHEIGHT; y++)
-    {
-        for (x = 0; x < SCREENWIDTH / 64; x++)
-        {
-            memcpy(dest, src + ((y & 63) << 6), 64);
-            dest += 64;
-        }
-        if (SCREENWIDTH & 63)
-        {
-            memcpy(dest, src + ((y & 63) << 6), SCREENWIDTH & 63);
-            dest += (SCREENWIDTH & 63);
-        }
-    }
+    // [crispy] use unified flat filling function
+    V_FillFlat(0, SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 }
 
 //========================================================================
@@ -954,10 +945,10 @@ void IN_DrawDMStats(void)
             }
             else
             {
-                V_DrawTLPatch(40, ypos,
+                V_DrawAltTLPatch(40, ypos,
                               W_CacheLumpNum(patchFaceOkayBase + i,
                                              PU_CACHE));
-                V_DrawTLPatch(xpos, 18,
+                V_DrawAltTLPatch(xpos, 18,
                               W_CacheLumpNum(patchFaceDeadBase + i,
                                              PU_CACHE));
             }

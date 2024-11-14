@@ -30,7 +30,6 @@ int viewangleoffset;
 int validcount = 1;             // increment every time a check is made
 
 lighttable_t *fixedcolormap;
-extern lighttable_t **walllights;
 
 int centerx, centery;
 fixed_t centerxfrac, centeryfrac;
@@ -42,6 +41,7 @@ int sscount, linecount, loopcount;
 
 fixed_t viewx, viewy, viewz;
 angle_t viewangle;
+localview_t localview; // [crispy]
 fixed_t viewcos, viewsin;
 player_t *viewplayer;
 
@@ -61,15 +61,22 @@ int viewangletox[FINEANGLES / 2];
 // that maps back to x ranges from clipangle to -clipangle
 angle_t xtoviewangle[MAXWIDTH + 1];
 
-lighttable_t *scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
-lighttable_t *scalelightfixed[MAXLIGHTSCALE];
-lighttable_t *zlight[LIGHTLEVELS][MAXLIGHTZ];
-
-// [AM] Fractional part of the current tic, in the half-open
-//      range of [0.0, 1.0).  Used for interpolation.
-extern fixed_t          fractionaltic;
+// [crispy] parameterized for smooth diminishing lighting
+lighttable_t ***scalelight = NULL;
+lighttable_t  **scalelightfixed = NULL;
+lighttable_t ***zlight = NULL;
 
 int extralight;                 // bumped light from gun blasts
+
+// [crispy] parameterized for smooth diminishing lighting
+int NUMCOLORMAPS;
+int LIGHTLEVELS;
+int LIGHTSEGSHIFT;
+int LIGHTBRIGHT;
+int MAXLIGHTSCALE;
+int LIGHTSCALESHIFT;
+int MAXLIGHTZ;
+int LIGHTZSHIFT;
 
 void (*colfunc) (void);
 void (*basecolfunc) (void);
@@ -193,15 +200,19 @@ int R_PointOnSegSide(fixed_t x, fixed_t y, seg_t * line)
 }
 
 
+// [crispy] turned into a general R_PointToAngle() flavor
+// called with either slope_div = SlopeDivCrispy() from R_PointToAngleCrispy()
+// or slope_div = SlopeDiv() else
 /*
 ===============================================================================
 =
-= R_PointToAngle
+= R_PointToAngleSlope
 =
 ===============================================================================
 */
 
-angle_t R_PointToAngle(fixed_t x, fixed_t y)
+angle_t R_PointToAngleSlope(fixed_t x, fixed_t y,
+            int (*slope_div) (unsigned int num, unsigned int den))
 {
     x -= viewx;
     y -= viewy;
@@ -212,17 +223,17 @@ angle_t R_PointToAngle(fixed_t x, fixed_t y)
         if (y >= 0)
         {                       // y>= 0
             if (x > y)
-                return tantoangle[SlopeDiv(y, x)];      // octant 0
+                return tantoangle[slope_div(y, x)];      // octant 0
             else
-                return ANG90 - 1 - tantoangle[SlopeDiv(x, y)];  // octant 1
+                return ANG90 - 1 - tantoangle[slope_div(x, y)];  // octant 1
         }
         else
         {                       // y<0
             y = -y;
             if (x > y)
-                return -tantoangle[SlopeDiv(y, x)];     // octant 8
+                return -tantoangle[slope_div(y, x)];     // octant 8
             else
-                return ANG270 + tantoangle[SlopeDiv(x, y)];     // octant 7
+                return ANG270 + tantoangle[slope_div(x, y)];     // octant 7
         }
     }
     else
@@ -231,17 +242,17 @@ angle_t R_PointToAngle(fixed_t x, fixed_t y)
         if (y >= 0)
         {                       // y>= 0
             if (x > y)
-                return ANG180 - 1 - tantoangle[SlopeDiv(y, x)]; // octant 3
+                return ANG180 - 1 - tantoangle[slope_div(y, x)]; // octant 3
             else
-                return ANG90 + tantoangle[SlopeDiv(x, y)];      // octant 2
+                return ANG90 + tantoangle[slope_div(x, y)];      // octant 2
         }
         else
         {                       // y<0
             y = -y;
             if (x > y)
-                return ANG180 + tantoangle[SlopeDiv(y, x)];     // octant 4
+                return ANG180 + tantoangle[slope_div(y, x)];     // octant 4
             else
-                return ANG270 - 1 - tantoangle[SlopeDiv(x, y)]; // octant 5
+                return ANG270 - 1 - tantoangle[slope_div(x, y)]; // octant 5
         }
     }
 
@@ -249,11 +260,37 @@ angle_t R_PointToAngle(fixed_t x, fixed_t y)
 }
 
 
+angle_t R_PointToAngle(fixed_t x, fixed_t y)
+{
+    return R_PointToAngleSlope(x, y, SlopeDiv);
+}
+
+// [crispy] overflow-safe R_PointToAngle() flavor
+// called only from R_CheckBBox(), R_AddLine() and P_SegLengths()
+angle_t R_PointToAngleCrispy(fixed_t x, fixed_t y)
+{
+    // [crispy] fix overflows for very long distances
+    int64_t y_viewy = (int64_t)y - viewy;
+    int64_t x_viewx = (int64_t)x - viewx;
+
+    // [crispy] the worst that could happen is e.g. INT_MIN-INT_MAX = 2*INT_MIN
+    if (x_viewx < INT_MIN || x_viewx > INT_MAX ||
+        y_viewy < INT_MIN || y_viewy > INT_MAX)
+    {
+        // [crispy] preserving the angle by halfing the distance in both directions
+        x = x_viewx / 2 + viewx;
+        y = y_viewy / 2 + viewy;
+    }
+
+    return R_PointToAngleSlope(x, y, SlopeDivCrispy);
+}
+
 angle_t R_PointToAngle2(fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2)
 {
     viewx = x1;
     viewy = y1;
-    return R_PointToAngle(x2, y2);
+    // [crispy] R_PointToAngle2() is never called during rendering
+    return R_PointToAngleSlope(x2, y2, SlopeDiv);
 }
 
 
@@ -312,6 +349,9 @@ void R_InitPointToAngle(void)
 
 //=============================================================================
 
+// [crispy] WiggleFix: move R_ScaleFromGlobalAngle function to r_segs.c, above
+// R_StoreWallRange
+#if 0
 /*
 ================
 =
@@ -363,6 +403,7 @@ fixed_t R_ScaleFromGlobalAngle(angle_t visangle)
 
     return scale;
 }
+#endif
 
 
 // [AM] Interpolate between two angles.
@@ -522,12 +563,80 @@ void R_InitLightTables(void)
     int i, j, level, startmap;
     int scale;
 
+    if (scalelight)
+    {
+        for (i = 0; i < LIGHTLEVELS; i++)
+        {
+            free(scalelight[i]);
+        }
+        free(scalelight);
+    }
+
+    if (scalelightfixed)
+    {
+        free(scalelightfixed);
+    }
+
+    if (zlight)
+    {
+        for (i = 0; i < LIGHTLEVELS; i++)
+        {
+            free(zlight[i]);
+        }
+        free(zlight);
+    }
+
+    // [crispy] smooth diminishing lighting
+    if (crispy->smoothlight)
+    {
+#ifdef CRISPY_TRUECOLOR
+        if (crispy->truecolor)
+        {
+            // [crispy] if in TrueColor mode, use smoothest diminished lighting
+            LIGHTLEVELS =      16 << 4;
+            LIGHTSEGSHIFT =     4 -  4;
+            LIGHTBRIGHT =       1 << 4;
+            MAXLIGHTSCALE =    48 << 3;
+            LIGHTSCALESHIFT =  12 -  3;
+            MAXLIGHTZ =       128 << 6;
+            LIGHTZSHIFT =      20 -  6;
+        }
+        else
+#endif
+        {
+            // [crispy] else, use paletted approach
+            LIGHTLEVELS =      16 << 1;
+            LIGHTSEGSHIFT =     4 -  1;
+            LIGHTBRIGHT =       1 << 1;
+            MAXLIGHTSCALE =    48 << 0;
+            LIGHTSCALESHIFT =  12 -  0;
+            MAXLIGHTZ =       128 << 3;
+            LIGHTZSHIFT =      20 -  3;
+        }
+    }
+    else
+    {
+        LIGHTLEVELS =      16;
+        LIGHTSEGSHIFT =     4;
+        LIGHTBRIGHT =       1;
+        MAXLIGHTSCALE =    48;
+        LIGHTSCALESHIFT =  12;
+        MAXLIGHTZ =       128;
+        LIGHTZSHIFT =      20;
+    }
+
+    scalelight = malloc(LIGHTLEVELS * sizeof(*scalelight));
+    scalelightfixed = malloc(MAXLIGHTSCALE * sizeof(*scalelightfixed));
+    zlight = malloc(LIGHTLEVELS * sizeof(*zlight));
+
 //
 // Calculate the light levels to use for each level / distance combination
 //
     for (i = 0; i < LIGHTLEVELS; i++)
     {
-        startmap = ((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS;
+        startmap = ((LIGHTLEVELS - LIGHTBRIGHT - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS;
+        scalelight[i] = malloc(MAXLIGHTSCALE * sizeof(**scalelight));
+        zlight[i] = malloc(MAXLIGHTZ * sizeof(**zlight));
         for (j = 0; j < MAXLIGHTZ; j++)
         {
             scale =
@@ -574,6 +683,8 @@ void R_SetViewSize(int blocks, int detail)
 ==============
 */
 
+int screenblocks = 10; // [crispy] moved here
+
 void R_ExecuteSetViewSize(void)
 {
     fixed_t cosadj, dy;
@@ -607,8 +718,6 @@ void R_ExecuteSetViewSize(void)
 		scaledviewwidth = scaledviewwidth_nonwide;
 	}
     }
-    // [crispy] make sure viewheight is always an even number
-    viewheight &= ~1;
 
     detailshift = setdetail;
     viewwidth = scaledviewwidth >> detailshift;
@@ -657,10 +766,19 @@ void R_ExecuteSetViewSize(void)
 //
     for (i = 0; i < viewheight; i++)
     {
-        dy = ((i - viewheight / 2) << FRACBITS) + FRACUNIT / 2;
+        // [crispy] re-generate lookup-table for yslope[] (free look)
+        // whenever "detailshift" or "screenblocks" change
+        const fixed_t num = (viewwidth_nonwide<<detailshift)/2*FRACUNIT;
+        for (j = 0; j < LOOKDIRS; j++)
+        {
+        dy = ((i - (viewheight / 2 + ((j - LOOKDIRMIN) * (1 << crispy->hires)) *
+                (screenblocks < 11 ? screenblocks : 11) / 10)) << FRACBITS) +
+                FRACUNIT / 2;
         dy = abs(dy);
-        yslope[i] = FixedDiv((viewwidth_nonwide << detailshift) / 2 * FRACUNIT, dy);
+        yslopes[j][i] = FixedDiv(num, dy);
+        }
     }
+    yslope = yslopes[LOOKDIRMIN];
 
     for (i = 0; i < viewwidth; i++)
     {
@@ -673,7 +791,7 @@ void R_ExecuteSetViewSize(void)
 //
     for (i = 0; i < LIGHTLEVELS; i++)
     {
-        startmap = ((LIGHTLEVELS - 1 - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS;
+        startmap = ((LIGHTLEVELS - LIGHTBRIGHT - i) * 2) * NUMCOLORMAPS / LIGHTLEVELS;
         for (j = 0; j < MAXLIGHTSCALE; j++)
         {
             level =
@@ -694,6 +812,8 @@ void R_ExecuteSetViewSize(void)
 
     // [crispy] Redraw status bar, needed for widescreen HUD
     SB_ForceRedraw();
+
+    pspr_interp = false; // [crispy]
 }
 
 
@@ -706,7 +826,7 @@ void R_ExecuteSetViewSize(void)
 */
 
 int detailLevel;
-int screenblocks = 10;
+// int screenblocks = 10; [crispy] moved before R_ExecuteSetViewSize
 
 void R_Init(void)
 {
@@ -720,7 +840,7 @@ void R_Init(void)
     R_InitTables();
     // viewwidth / viewheight / detailLevel are set by the defaults
     printf (".");
-    R_SetViewSize(screenblocks, detailLevel);
+    R_SetViewSize(BETWEEN(3, 11, screenblocks), detailLevel);
     //tprintf("R_InitPlanes\n", 0);
     R_InitPlanes();
     printf (".");
@@ -764,6 +884,23 @@ subsector_t *R_PointInSubsector(fixed_t x, fixed_t y)
 
 }
 
+// [crispy]
+static inline boolean CheckLocalView(const player_t *player)
+{
+  return (
+    // Don't use localview if the player is spying.
+    player == &players[consoleplayer] &&
+    // Don't use localview if the player is dead.
+    player->playerstate != PST_DEAD &&
+    // Don't use localview if the player just teleported.
+    !player->mo->reactiontime &&
+    // Don't use localview if a demo is playing.
+    !demoplayback &&
+    // Don't use localview during a netgame (single-player only).
+    !netgame
+  );
+}
+
 //----------------------------------------------------------------------------
 //
 // PROC R_SetupFrame
@@ -775,6 +912,7 @@ void R_SetupFrame(player_t * player)
     int i;
     int tableAngle;
     int tempCentery;
+    int pitch; // [crispy]
 
     //drawbsp = 1;
     viewplayer = player;
@@ -792,10 +930,23 @@ void R_SetupFrame(player_t * player)
         // Don't interpolate during a paused state
         leveltime > oldleveltime)
     {
-        viewx = player->mo->oldx + FixedMul(player->mo->x - player->mo->oldx, fractionaltic);
-        viewy = player->mo->oldy + FixedMul(player->mo->y - player->mo->oldy, fractionaltic);
-        viewz = player->oldviewz + FixedMul(player->viewz - player->oldviewz, fractionaltic);
-        viewangle = R_InterpolateAngle(player->mo->oldangle, player->mo->angle, fractionaltic) + viewangleoffset;
+        const boolean use_localview = CheckLocalView(player);
+
+        viewx = LerpFixed(player->mo->oldx, player->mo->x);
+        viewy = LerpFixed(player->mo->oldy, player->mo->y);
+        viewz = LerpFixed(player->oldviewz, player->viewz);
+        if (use_localview)
+        {
+            viewangle = (player->mo->angle + localview.angle -
+                        localview.ticangle + LerpAngle(localview.oldticangle,
+                                                       localview.ticangle)) + viewangleoffset;
+        }
+        else
+        {
+            viewangle = LerpAngle(player->mo->oldangle, player->mo->angle) + viewangleoffset;
+        }
+
+        pitch = LerpInt(player->oldlookdir, player->lookdir);
     }
     else
     {
@@ -803,6 +954,7 @@ void R_SetupFrame(player_t * player)
         viewy = player->mo->y;
         viewz = player->viewz;
         viewangle = player->mo->angle + viewangleoffset;
+        pitch = player->lookdir; // [crispy]
     }
 
     tableAngle = viewangle >> ANGLETOFINESHIFT;
@@ -815,17 +967,15 @@ void R_SetupFrame(player_t * player)
     }
 
     extralight = player->extralight;
-    tempCentery = viewheight / 2 + ((player->lookdir) << crispy->hires) * screenblocks / 10;
+    // [crispy] apply new yslope[] whenever "lookdir", "detailshift" or
+    // "screenblocks" change
+    tempCentery = viewheight / 2 + (pitch * (1 << crispy->hires)) *
+                    (screenblocks < 11 ? screenblocks : 11) / 10;
     if (centery != tempCentery)
     {
         centery = tempCentery;
         centeryfrac = centery << FRACBITS;
-        for (i = 0; i < viewheight; i++)
-        {
-            yslope[i] = FixedDiv((viewwidth_nonwide << detailshift) / 2 * FRACUNIT,
-                                 abs(((i - centery) << FRACBITS) +
-                                     FRACUNIT / 2));
-        }
+        yslope = yslopes[LOOKDIRMIN + pitch];
     }
     viewsin = finesine[tableAngle];
     viewcos = finecosine[tableAngle];
@@ -833,7 +983,8 @@ void R_SetupFrame(player_t * player)
     if (player->fixedcolormap)
     {
         fixedcolormap = colormaps + player->fixedcolormap
-            * 256 * sizeof(lighttable_t);
+            * (NUMCOLORMAPS / 32) // [crispy] smooth diminishing lighting
+            * 256 /* * sizeof(lighttable_t)*/;
         walllights = scalelightfixed;
         for (i = 0; i < MAXLIGHTSCALE; i++)
         {
@@ -877,8 +1028,6 @@ void R_SetupFrame(player_t * player)
 
 void R_RenderPlayerView(player_t * player)
 {
-    // [crispy] Smooth texture scrolling
-    extern void R_InterpolateTextureOffsets(void);
     extern boolean automapactive;
 
     R_SetupFrame(player);

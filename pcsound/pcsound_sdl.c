@@ -18,11 +18,18 @@
 #include <stdio.h>
 #include <stdlib.h>
 
+#include "config.h"
+
 #include "SDL.h"
-#include "SDL_mixer.h"
 
 #include "pcsound.h"
 #include "pcsound_internal.h"
+
+
+#ifndef DISABLE_SDL2MIXER
+
+#include "SDL_mixer.h"
+
 
 #define MAX_SOUND_SLICE_TIME 70 /* ms */
 #define SQUARE_WAVE_AMP 0x2000
@@ -58,7 +65,7 @@ static void PCSound_Mix_Callback(int chan, void *stream, int len, void *udata)
     Sint16 *leftptr;
     Sint16 *rightptr;
     Sint16 this_value;
-    int oldfreq;
+    int frequency;
     int i;
     int nsamples;
 
@@ -78,19 +85,14 @@ static void PCSound_Mix_Callback(int chan, void *stream, int len, void *udata)
 
         while (current_remaining == 0) 
         {
-            oldfreq = current_freq;
-
             // Get the next frequency to play
 
-            callback(&current_remaining, &current_freq);
+            callback(&current_remaining, &frequency);
 
-            if (current_freq != 0)
+            if (current_freq != frequency)
             {
-                // Adjust phase to match to the new frequency.
-                // This gives us a smooth transition between different tones,
-                // with no impulse changes.
-
-                phase_offset = (phase_offset * oldfreq) / current_freq;
+                current_freq = frequency;
+                phase_offset = 0;
             }
 
             current_remaining = (current_remaining * mixing_freq) / 1000;
@@ -248,3 +250,5 @@ pcsound_driver_t pcsound_sdl_driver =
     PCSound_SDL_Shutdown,
 };
 
+
+#endif // DISABLE_SDL2MIXER

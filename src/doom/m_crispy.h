@@ -28,6 +28,7 @@ typedef struct
 
 extern multiitem_t multiitem_bobfactor[NUM_BOBFACTORS];
 extern multiitem_t multiitem_brightmaps[NUM_BRIGHTMAPS];
+extern multiitem_t multiitem_coloredblood[NUM_COLOREDBLOOD];
 extern multiitem_t multiitem_centerweapon[NUM_CENTERWEAPON];
 extern multiitem_t multiitem_coloredhud[NUM_COLOREDHUD];
 extern multiitem_t multiitem_crosshair[NUM_CROSSHAIRS];
@@ -43,6 +44,7 @@ extern multiitem_t multiitem_statsformat[NUM_STATSFORMATS];
 extern multiitem_t multiitem_translucency[NUM_TRANSLUCENCY];
 extern multiitem_t multiitem_widgets[NUM_WIDGETS];
 extern multiitem_t multiitem_widescreen[NUM_RATIOS];
+extern multiitem_t multiitem_difficulties[NUM_SKILLS];
 
 extern void M_CrispyToggleAutomapstats(int choice);
 extern void M_CrispyToggleBobfactor(int choice);
@@ -63,11 +65,13 @@ extern void M_CrispyToggleFlipcorpses(int choice);
 extern void M_CrispyToggleFreeaim(int choice);
 extern void M_CrispyToggleFreelook(int choice);
 extern void M_CrispyToggleFullsounds(int choice);
+extern void M_CrispyToggleFpsLimit(int choice);
 extern void M_CrispyToggleHires(int choice);
 extern void M_CrispyToggleJumping(int choice);
 extern void M_CrispyToggleLeveltime(int choice);
 extern void M_CrispyToggleMouseLook(int choice);
 extern void M_CrispyToggleNeghealth(int choice);
+extern void M_CrispyToggleDefaultSkill(int choice);
 extern void M_CrispyToggleOverunder(int choice);
 extern void M_CrispyTogglePitch(int choice);
 extern void M_CrispyTogglePlayerCoords(int choice);

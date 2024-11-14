@@ -24,7 +24,6 @@
 #include <string.h>
 #include <assert.h>
 #include "SDL.h"
-#include "SDL_mixer.h"
 
 #ifdef HAVE_LIBSAMPLERATE
 #include <samplerate.h>
@@ -40,6 +39,29 @@
 #include "z_zone.h"
 
 #include "doomtype.h"
+
+
+// [crispy] values 3 and higher might reproduce DOOM.EXE more accurately,
+// but 1 is closer to "use_libsamplerate = 0" which is the default in Choco
+// and causes only a short delay at startup
+int use_libsamplerate = 1;
+
+// Scale factor used when converting libsamplerate floating point numbers
+// to integers. Too high means the sounds can clip; too low means they
+// will be too quiet. This is an amount that should avoid clipping most
+// of the time: with all the Doom IWAD sound effects, at least. If a PWAD
+// is used, clipping might occur.
+
+// [crispy] Get full output from libsamplerate. Our default is to use linear
+// interpolation, which means the resampling process will not introduce any new
+// clipping. This will also better match vanilla's volume.
+float libsamplerate_scale = 1.0f;
+
+
+#ifndef DISABLE_SDL2MIXER
+
+#include "SDL_mixer.h"
+
 
 #define LOW_PASS_FILTER
 //#define DEBUG_DUMP_WAVS
@@ -78,18 +100,6 @@ static allocated_sound_t *allocated_sounds_head = NULL;
 static allocated_sound_t *allocated_sounds_tail = NULL;
 static int allocated_sounds_size = 0;
 
-// [crispy] values 3 and higher might reproduce DOOM.EXE more accurately,
-// but 1 is closer to "use_libsamplerate = 0" which is the default in Choco
-// and causes only a short delay at startup
-int use_libsamplerate = 1;
-
-// Scale factor used when converting libsamplerate floating point numbers
-// to integers. Too high means the sounds can clip; too low means they
-// will be too quiet. This is an amount that should avoid clipping most
-// of the time: with all the Doom IWAD sound effects, at least. If a PWAD
-// is used, clipping might occur.
-
-float libsamplerate_scale = 0.65f;
 
 // Hook a sound into the linked list at the head.
 
@@ -569,7 +579,7 @@ static void WriteWAV(char *filename, byte *data,
     unsigned int i;
     unsigned short s;
 
-    wav = fopen(filename, "wb");
+    wav = M_fopen(filename, "wb");
 
     // Header
 
@@ -876,21 +886,12 @@ static void GetSfxLumpName(sfxinfo_t *sfx, char *buf, size_t buf_len)
     }
 }
 
-#ifdef HAVE_LIBSAMPLERATE
-
 // Preload all the sound effects - stops nasty ingame freezes
 
 static void I_SDL_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 {
     char namebuf[9];
     int i;
-
-    // Don't need to precache the sounds unless we are using libsamplerate.
-
-    if (use_libsamplerate == 0)
-    {
-	return;
-    }
 
     printf("I_SDL_PrecacheSounds: Precaching all sound effects..");
 
@@ -914,15 +915,6 @@ static void I_SDL_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
 
     printf("\n");
 }
-
-#else
-
-static void I_SDL_PrecacheSounds(sfxinfo_t *sounds, int num_sounds)
-{
-    // no-op
-}
-
-#endif
 
 // Load a SFX chunk into memory and ensure that it is locked.
 
@@ -1140,11 +1132,11 @@ static int GetSliceSize(void)
     return 1024;
 }
 
-static boolean I_SDL_InitSound(boolean _use_sfx_prefix)
+static boolean I_SDL_InitSound(GameMission_t mission)
 {
     int i;
 
-    use_sfx_prefix = _use_sfx_prefix;
+    use_sfx_prefix = (mission == doom || mission == strife);
 
     // No sounds yet
     for (i=0; i<NUM_CHANNELS; ++i)
@@ -1197,7 +1189,7 @@ static boolean I_SDL_InitSound(boolean _use_sfx_prefix)
     return true;
 }
 
-static snddevice_t sound_sdl_devices[] = 
+static const snddevice_t sound_sdl_devices[] =
 {
     SNDDEVICE_SB,
     SNDDEVICE_PAS,
@@ -1207,7 +1199,7 @@ static snddevice_t sound_sdl_devices[] =
     SNDDEVICE_AWE32,
 };
 
-sound_module_t sound_sdl_module = 
+const sound_module_t sound_sdl_module =
 {
     sound_sdl_devices,
     arrlen(sound_sdl_devices),
@@ -1222,3 +1214,5 @@ sound_module_t sound_sdl_module =
     I_SDL_PrecacheSounds,
 };
 
+
+#endif // DISABLE_SDL2MIXER

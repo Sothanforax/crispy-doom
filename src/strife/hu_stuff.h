@@ -33,7 +33,7 @@
 #define HU_BROADCAST    9       // haleyjd [STRIFE] Changed 5 -> 9
 #define HU_CHANGENAME   10      // haleyjd [STRIFE] Special command
 
-#define HU_MSGX         0
+#define HU_MSGX         (0 - WIDESCREENDELTA)
 #define HU_MSGY         (SHORT(hu_font[0]->height) + 1) // [STRIFE]: DOOM bug fix
 #define HU_MSGWIDTH     64      // in characters
 #define HU_MSGHEIGHT    2       // in lines
@@ -63,6 +63,13 @@ extern const char *mapnames[];
 
 // [STRIFE]
 extern patch_t* yfont[HU_FONTSIZE];   // haleyjd 09/18/10: [STRIFE]
+extern patch_t *hu_font[HU_FONTSIZE];
+
+extern boolean message_dontfuckwithme;
+
+extern boolean chat_on;
+extern boolean sendsave;
+
 
 #endif
 

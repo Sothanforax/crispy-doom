@@ -20,6 +20,7 @@
 
 #include <stdlib.h>
 #include <ctype.h>
+#include <time.h> // [crispy] strftime, localtime
 
 
 #include "doomdef.h"
@@ -30,6 +31,7 @@
 #include "deh_main.h"
 
 #include "i_input.h"
+#include "i_joystick.h"
 #include "i_swap.h"
 #include "i_system.h"
 #include "i_timer.h"
@@ -63,11 +65,6 @@
 #include "m_crispy.h" // [crispy] Crispness menu
 
 #include "v_trans.h" // [crispy] colored "invert mouse" message
-
-extern patch_t*		hu_font[HU_FONTSIZE];
-extern boolean		message_dontfuckwithme;
-
-extern boolean		chat_on;		// in heads-up code
 
 //
 // defaulted values
@@ -106,8 +103,17 @@ boolean			messageNeedsInput;
 void    (*messageRoutine)(int response);
 
 // [crispy] intermediate gamma levels
-char gammamsg[5+4][26+2] =
+char gammamsg[5+13][26+2] =
 {
+    GAMMALVL050,
+    GAMMALVL055,
+    GAMMALVL060,
+    GAMMALVL065,
+    GAMMALVL070,
+    GAMMALVL075,
+    GAMMALVL080,
+    GAMMALVL085,
+    GAMMALVL090,
     GAMMALVL0,
     GAMMALVL05,
     GAMMALVL1,
@@ -127,6 +133,13 @@ static boolean          joypadSave = false; // was the save action initiated by 
 // old save description before edit
 char			saveOldString[SAVESTRINGSIZE];  
 
+// [crispy] for entering numeric values
+#define NUMERIC_ENTRY_NUMDIGITS 3
+boolean numeric_enter;
+int numeric_entry;
+static char numeric_entry_str[NUMERIC_ENTRY_NUMDIGITS + 1];
+static int numeric_entry_index;
+
 boolean			inhelpscreens;
 boolean			menuactive;
 
@@ -134,8 +147,11 @@ boolean			menuactive;
 #define LINEHEIGHT		16
 #define CRISPY_LINEHEIGHT	10 // [crispy] Crispness menu
 
-extern boolean		sendpause;
 char			savegamestrings[10][SAVESTRINGSIZE];
+
+// [FG] support up to 8 pages of savegames
+int savepage = 0;
+static const int savepage_max = 7;
 
 char	endstring[160];
 
@@ -149,13 +165,17 @@ extern boolean speedkeydown (void);
 typedef struct
 {
     // 0 = no cursor here, 1 = ok, 2 = arrows ok
+    // [crispy] 3 = arrows ok, no mouse x
+    // [crispy] 4 = arrows ok, enter for numeric entry, no mouse x
     short	status;
     
     char	name[10];
     
     // choice = menu item #.
-    // if status = 2,
+    // if status = 2 or 3,
     //   choice=0:leftarrow,1:rightarrow
+    // [crispy] if status = 4,
+    //   choice=0:leftarrow,1:rightarrow,2:enter
     void	(*routine)(int choice);
     
     // hotkey in menu
@@ -369,6 +389,7 @@ enum
     ep3,
     ep4,
     ep5, // [crispy] Sigil
+    ep6, // [crispy] Sigil II
     ep_end
 } episodes_e;
 
@@ -379,6 +400,17 @@ menuitem_t EpisodeMenu[]=
     {1,"M_EPI3", M_Episode,'i'},
     {1,"M_EPI4", M_Episode,'t'}
    ,{1,"M_EPI5", M_Episode,'s'} // [crispy] Sigil
+   ,{1,"M_EPI6", M_Episode,'s'} // [crispy] Sigil II
+};
+
+// [crispy] have Sigil II but not Sigil
+menuitem_t EpisodeMenuSII[]=
+{
+    {1,"M_EPI1", M_Episode,'k'},
+    {1,"M_EPI2", M_Episode,'t'},
+    {1,"M_EPI3", M_Episode,'i'},
+    {1,"M_EPI4", M_Episode,'t'}
+   ,{1,"M_EPI6", M_Episode,'s'} // [crispy] Sigil II
 };
 
 menu_t  EpiDef =
@@ -444,8 +476,8 @@ enum
 menuitem_t OptionsMenu[]=
 {
     {1,"M_ENDGAM",	M_EndGame,'e', "End Game"},
-    {1,"M_MESSG",	M_ChangeMessages,'m', "Messages: "},
-    {1,"M_DETAIL",	M_ChangeDetail,'g', "Graphic Detail: "},
+    {3,"M_MESSG",	M_ChangeMessages,'m', "Messages: "},
+    {3,"M_DETAIL",	M_ChangeDetail,'g', "Graphic Detail: "},
     {2,"M_SCRNSZ",	M_SizeDisplay,'s', "Screen Size"},
     {-1,"",0,'\0'},
     {1,"M_MSENS",	M_Mouse,'m', "Mouse Sensitivity"}, // [crispy] mouse sensitivity menu
@@ -484,7 +516,7 @@ static menuitem_t MouseMenu[]=
     {-1,"",0,'\0'},
     {2,"",	M_ChangeSensitivity_y,'v'},
     {-1,"",0,'\0'},
-    {1,"",	M_MouseInvert,'i'},
+    {3,"",	M_MouseInvert,'i'},
 };
 
 static menu_t  MouseDef =
@@ -504,6 +536,7 @@ enum
     crispness_hires,
     crispness_widescreen,
     crispness_uncapped,
+    crispness_fpslimit,
     crispness_vsync,
     crispness_smoothscaling,
     crispness_sep_rendering_,
@@ -525,19 +558,20 @@ enum
 static menuitem_t Crispness1Menu[]=
 {
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleHires,'h'},
-    {1,"",	M_CrispyToggleWidescreen,'w'},
-    {1,"",	M_CrispyToggleUncapped,'u'},
-    {1,"",	M_CrispyToggleVsync,'v'},
-    {1,"",	M_CrispyToggleSmoothScaling,'s'},
+    {3,"",	M_CrispyToggleHires,'h'},
+    {3,"",	M_CrispyToggleWidescreen,'w'},
+    {3,"",	M_CrispyToggleUncapped,'u'},
+    {4,"",	M_CrispyToggleFpsLimit,'f'},
+    {3,"",	M_CrispyToggleVsync,'v'},
+    {3,"",	M_CrispyToggleSmoothScaling,'s'},
     {-1,"",0,'\0'},
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleColoredhud,'c'},
-    {1,"",	M_CrispyToggleTranslucency,'e'},
-    {1,"",	M_CrispyToggleSmoothLighting,'s'},
-    {1,"",	M_CrispyToggleBrightmaps,'b'},
-    {1,"",	M_CrispyToggleColoredblood,'c'},
-    {1,"",	M_CrispyToggleFlipcorpses,'r'},
+    {3,"",	M_CrispyToggleColoredhud,'c'},
+    {3,"",	M_CrispyToggleTranslucency,'e'},
+    {3,"",	M_CrispyToggleSmoothLighting,'s'},
+    {3,"",	M_CrispyToggleBrightmaps,'b'},
+    {3,"",	M_CrispyToggleColoredblood,'c'},
+    {3,"",	M_CrispyToggleFlipcorpses,'r'},
     {-1,"",0,'\0'},
     {1,"",	M_CrispnessNext,'n'},
     {1,"",	M_CrispnessPrev,'p'},
@@ -549,7 +583,7 @@ static menu_t  Crispness1Def =
     &OptionsDef,
     Crispness1Menu,
     M_DrawCrispness1,
-    48,28,
+    48,18,
     1
 };
 
@@ -580,19 +614,19 @@ enum
 static menuitem_t Crispness2Menu[]=
 {
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleFullsounds,'p'},
-    {1,"",	M_CrispyToggleSoundfixes,'m'},
-    {1,"",	M_CrispyToggleSndChannels,'s'},
-    {1,"",	M_CrispyToggleSoundMono,'m'},
+    {3,"",	M_CrispyToggleFullsounds,'p'},
+    {3,"",	M_CrispyToggleSoundfixes,'m'},
+    {3,"",	M_CrispyToggleSndChannels,'s'},
+    {3,"",	M_CrispyToggleSoundMono,'m'},
     {-1,"",0,'\0'},
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleExtAutomap,'e'},
-    {1,"",	M_CrispyToggleSmoothMap,'m'},
-    {1,"",	M_CrispyToggleAutomapstats,'s'},
-    {1,"",	M_CrispyToggleStatsFormat,'f'},
-    {1,"",	M_CrispyToggleLeveltime,'l'},
-    {1,"",	M_CrispyTogglePlayerCoords,'p'},
-    {1,"",	M_CrispyToggleSecretmessage,'s'},
+    {3,"",	M_CrispyToggleExtAutomap,'e'},
+    {3,"",	M_CrispyToggleSmoothMap,'m'},
+    {3,"",	M_CrispyToggleAutomapstats,'s'},
+    {3,"",	M_CrispyToggleStatsFormat,'f'},
+    {3,"",	M_CrispyToggleLeveltime,'l'},
+    {3,"",	M_CrispyTogglePlayerCoords,'p'},
+    {3,"",	M_CrispyToggleSecretmessage,'s'},
     {-1,"",0,'\0'},
     {1,"",	M_CrispnessNext,'n'},
     {1,"",	M_CrispnessPrev,'p'},
@@ -604,7 +638,7 @@ static menu_t  Crispness2Def =
     &OptionsDef,
     Crispness2Menu,
     M_DrawCrispness2,
-    48,28,
+    48,18,
     1
 };
 
@@ -617,6 +651,7 @@ enum
     crispness_centerweapon,
     crispness_pitch,
     crispness_neghealth,
+    crispness_defaultskill,
     crispness_sep_tactical_,
 
     crispness_sep_crosshair,
@@ -634,18 +669,19 @@ enum
 static menuitem_t Crispness3Menu[]=
 {
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleFreelook,'a'},
-    {1,"",	M_CrispyToggleMouseLook,'p'},
-    {1,"",	M_CrispyToggleBobfactor,'p'},
-    {1,"",	M_CrispyToggleCenterweapon,'c'},
-    {1,"",	M_CrispyTogglePitch,'w'},
-    {1,"",	M_CrispyToggleNeghealth,'n'},
+    {3,"",	M_CrispyToggleFreelook,'a'},
+    {3,"",	M_CrispyToggleMouseLook,'p'},
+    {3,"",	M_CrispyToggleBobfactor,'p'},
+    {3,"",	M_CrispyToggleCenterweapon,'c'},
+    {3,"",	M_CrispyTogglePitch,'w'},
+    {3,"",	M_CrispyToggleNeghealth,'n'},
+    {3,"",	M_CrispyToggleDefaultSkill,'d'},
     {-1,"",0,'\0'},
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleCrosshair,'d'},
-    {1,"",	M_CrispyToggleCrosshairtype,'c'},
-    {1,"",	M_CrispyToggleCrosshairHealth,'c'},
-    {1,"",	M_CrispyToggleCrosshairTarget,'h'},
+    {3,"",	M_CrispyToggleCrosshair,'d'},
+    {3,"",	M_CrispyToggleCrosshairtype,'c'},
+    {3,"",	M_CrispyToggleCrosshairHealth,'c'},
+    {3,"",	M_CrispyToggleCrosshairTarget,'h'},
     {-1,"",0,'\0'},
     {1,"",	M_CrispnessNext,'n'},
     {1,"",	M_CrispnessPrev,'p'},
@@ -657,7 +693,7 @@ static menu_t  Crispness3Def =
     &OptionsDef,
     Crispness3Menu,
     M_DrawCrispness3,
-    48,28,
+    48,18,
     1
 };
 
@@ -685,15 +721,15 @@ enum
 static menuitem_t Crispness4Menu[]=
 {
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleFreeaim,'v'},
-    {1,"",	M_CrispyToggleJumping,'a'},
-    {1,"",	M_CrispyToggleOverunder,'w'},
+    {3,"",	M_CrispyToggleFreeaim,'v'},
+    {3,"",	M_CrispyToggleJumping,'a'},
+    {3,"",	M_CrispyToggleOverunder,'w'},
     {-1,"",0,'\0'},
     {-1,"",0,'\0'},
-    {1,"",	M_CrispyToggleDemoTimer,'v'},
-    {1,"",	M_CrispyToggleDemoTimerDir,'a'},
-    {1,"",	M_CrispyToggleDemoBar,'w'},
-    {1,"",	M_CrispyToggleDemoUseTimer,'u'},
+    {3,"",	M_CrispyToggleDemoTimer,'v'},
+    {3,"",	M_CrispyToggleDemoTimerDir,'a'},
+    {3,"",	M_CrispyToggleDemoBar,'w'},
+    {3,"",	M_CrispyToggleDemoUseTimer,'u'},
     {-1,"",0,'\0'},
     {1,"",	M_CrispnessNext,'n'},
     {1,"",	M_CrispnessPrev,'p'},
@@ -705,7 +741,7 @@ static menu_t  Crispness4Def =
     &OptionsDef,
     Crispness4Menu,
     M_DrawCrispness4,
-    48,28,
+    48,18,
     1
 };
 
@@ -873,7 +909,7 @@ void M_ReadSaveStrings(void)
         int retval;
         M_StringCopy(name, P_SaveGameFile(i), sizeof(name));
 
-	handle = fopen(name, "rb");
+	handle = M_fopen(name, "rb");
         if (handle == NULL)
         {
             M_StringCopy(savegamestrings[i], EMPTYSTRING, SAVESTRINGSIZE);
@@ -884,6 +920,46 @@ void M_ReadSaveStrings(void)
 	fclose(handle);
         LoadMenu[i].status = retval == SAVESTRINGSIZE;
     }
+}
+
+// [FG] support up to 8 pages of savegames
+static void M_DrawSaveLoadBottomLine(void)
+{
+  char pagestr[16];
+  const int y = 152;
+
+  dp_translation = cr[CR_GOLD];
+
+  if (savepage > 0)
+    M_WriteText(LoadDef.x, y, "< PGUP");
+  if (savepage < savepage_max)
+    M_WriteText(LoadDef.x+(SAVESTRINGSIZE-6)*8, y, "PGDN >");
+
+  M_snprintf(pagestr, sizeof(pagestr), "page %d/%d", savepage + 1, savepage_max + 1);
+  M_WriteText(ORIGWIDTH/2-M_StringWidth(pagestr)/2, y, pagestr);
+
+  // [crispy] print "modified" (or created initially) time of savegame file
+  if (LoadMenu[itemOn].status)
+  {
+    struct stat st;
+    char filedate[32];
+
+    if (M_stat(P_SaveGameFile(itemOn), &st) == 0)
+    {
+// [FG] suppress the most useless compiler warning ever
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wformat-y2k"
+#endif
+    strftime(filedate, sizeof(filedate), "%x %X", localtime(&st.st_mtime));
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
+    M_WriteText(ORIGWIDTH/2-M_StringWidth(filedate)/2, y + 8, filedate);
+    }
+  }
+
+  dp_translation = NULL;
 }
 
 
@@ -903,6 +979,8 @@ void M_DrawLoad(void)
 	M_DrawSaveLoadBorder(LoadDef.x,LoadDef.y+LINEHEIGHT*i);
 	M_WriteText(LoadDef.x,LoadDef.y+LINEHEIGHT*i,savegamestrings[i]);
     }
+
+  M_DrawSaveLoadBottomLine();
 }
 
 
@@ -986,6 +1064,8 @@ void M_DrawSave(void)
 	i = M_StringWidth(savegamestrings[saveSlot]);
 	M_WriteText(LoadDef.x + i,LoadDef.y+LINEHEIGHT*saveSlot,"_");
     }
+
+  M_DrawSaveLoadBottomLine();
 }
 
 //
@@ -1397,7 +1477,8 @@ void M_DrawEpisode(void)
 
 void M_VerifyNightmare(int key)
 {
-    if (key != key_menu_confirm)
+    // [crispy] allow to confirm by pressing Enter key
+    if (key != key_menu_confirm && key != key_menu_forward)
 	return;
 		
     G_DeferedInitNew(nightmare,epi+1,1);
@@ -1427,6 +1508,9 @@ void M_Episode(int choice)
     }
 
     epi = choice;
+    // [crispy] have Sigil II loaded but not Sigil
+    if (epi == 4 && crispy->haved1e6 && !crispy->haved1e5)
+        epi = 5;
     M_SetupNextMenu(&NewDef);
 }
 
@@ -1522,27 +1606,16 @@ static void M_DrawCrispnessBackground(void)
 {
 	const byte *src = crispness_background;
 	pixel_t *dest;
-	int x, y;
 
 	// [NS] Try to load the background from a lump.
 	int lump = W_CheckNumForName("CRISPYBG");
 	if (lump != -1 && W_LumpLength(lump) >= 64*64)
 	{
-		src = W_CacheLumpNum(lump, PU_STATIC);
+		src = W_CacheLumpNum(lump, PU_CACHE);
 	}
 	dest = I_VideoBuffer;
 
-	for (y = 0; y < SCREENHEIGHT; y++)
-	{
-		for (x = 0; x < SCREENWIDTH; x++)
-		{
-#ifndef CRISPY_TRUECOLOR
-			*dest++ = src[(y & 63) * 64 + (x & 63)];
-#else
-			*dest++ = colormaps[src[(y & 63) * 64 + (x & 63)]];
-#endif
-		}
-	}
+	V_FillFlat(0, SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 
 	inhelpscreens = true;
 }
@@ -1553,7 +1626,7 @@ static void M_DrawCrispnessHeader(const char *item)
 {
     M_snprintf(crispy_menu_text, sizeof(crispy_menu_text),
                "%s%s", crstr[CR_GOLD], item);
-    M_WriteText(ORIGWIDTH/2 - M_StringWidth(item) / 2, 12, crispy_menu_text);
+    M_WriteText(ORIGWIDTH/2 - M_StringWidth(item) / 2, 6, crispy_menu_text);
 }
 
 static void M_DrawCrispnessSeparator(int y, const char *item)
@@ -1581,6 +1654,27 @@ static void M_DrawCrispnessMultiItem(int y, const char *item, multiitem_t *multi
     M_WriteText(currentMenu->x, currentMenu->y + CRISPY_LINEHEIGHT * y, crispy_menu_text);
 }
 
+static void M_DrawCrispnessNumericItem(int y, const char *item, int feat, const char *zero, boolean cond, const char *disabled)
+{
+    char number[NUMERIC_ENTRY_NUMDIGITS + 2];
+    const int size = NUMERIC_ENTRY_NUMDIGITS + 2;
+
+    if (numeric_enter)
+    {
+        M_snprintf(number, size, "%s_", numeric_entry_str);
+    }
+    else
+    {
+        M_snprintf(number, size, "%d", feat);
+    }
+
+    M_snprintf(crispy_menu_text, sizeof(crispy_menu_text),
+               "%s%s: %s%s", cond ? crstr[CR_NONE] : crstr[CR_DARK], item,
+               cond ? (feat || numeric_enter ? crstr[CR_GREEN] : crstr[CR_DARK]) : crstr[CR_DARK],
+               cond ? (feat || numeric_enter ? number : zero) : disabled);
+    M_WriteText(currentMenu->x, currentMenu->y + CRISPY_LINEHEIGHT * y, crispy_menu_text);
+}
+
 static void M_DrawCrispnessGoto(int y, const char *item)
 {
     M_snprintf(crispy_menu_text, sizeof(crispy_menu_text),
@@ -1596,17 +1690,18 @@ static void M_DrawCrispness1(void)
 
     M_DrawCrispnessSeparator(crispness_sep_rendering, "Rendering");
     M_DrawCrispnessItem(crispness_hires, "High Resolution Rendering", crispy->hires, true);
-    M_DrawCrispnessMultiItem(crispness_widescreen, "Widescreen Aspect Ratio", multiitem_widescreen, crispy->widescreen, aspect_ratio_correct);
+    M_DrawCrispnessMultiItem(crispness_widescreen, "Aspect Ratio", multiitem_widescreen, crispy->widescreen, aspect_ratio_correct == 1);
     M_DrawCrispnessItem(crispness_uncapped, "Uncapped Framerate", crispy->uncapped, true);
+    M_DrawCrispnessNumericItem(crispness_fpslimit, "Framerate Limit", crispy->fpslimit, "None", crispy->uncapped, "35");
     M_DrawCrispnessItem(crispness_vsync, "Enable VSync", crispy->vsync, !force_software_renderer);
-    M_DrawCrispnessItem(crispness_smoothscaling, "Smooth Pixel Scaling", crispy->smoothscaling, true);
+    M_DrawCrispnessItem(crispness_smoothscaling, "Smooth Pixel Scaling", crispy->smoothscaling, !force_software_renderer);
 
     M_DrawCrispnessSeparator(crispness_sep_visual, "Visual");
     M_DrawCrispnessMultiItem(crispness_coloredhud, "Colorize HUD Elements", multiitem_coloredhud, crispy->coloredhud, true);
     M_DrawCrispnessMultiItem(crispness_translucency, "Enable Translucency", multiitem_translucency, crispy->translucency, true);
     M_DrawCrispnessItem(crispness_smoothlight, "Smooth Diminishing Lighting", crispy->smoothlight, true);
     M_DrawCrispnessMultiItem(crispness_brightmaps, "Apply Brightmaps to", multiitem_brightmaps, crispy->brightmaps, true);
-    M_DrawCrispnessItem(crispness_coloredblood, "Colored Blood", crispy->coloredblood, gameversion != exe_chex);
+    M_DrawCrispnessMultiItem(crispness_coloredblood, "Colored Blood", multiitem_coloredblood, crispy->coloredblood, gameversion != exe_chex);
     M_DrawCrispnessItem(crispness_flipcorpses, "Randomly Mirrored Corpses", crispy->flipcorpses, gameversion != exe_chex);
 
     M_DrawCrispnessGoto(crispness1_next, "Next Page >");
@@ -1656,6 +1751,7 @@ static void M_DrawCrispness3(void)
     M_DrawCrispnessMultiItem(crispness_centerweapon, "Weapon Attack Alignment", multiitem_centerweapon, crispy->centerweapon, crispy->bobfactor != BOBFACTOR_OFF);
     M_DrawCrispnessItem(crispness_pitch, "Weapon Recoil Pitch", crispy->pitch, true);
     M_DrawCrispnessItem(crispness_neghealth, "Negative Player Health", crispy->neghealth, true);
+    M_DrawCrispnessMultiItem(crispness_defaultskill, "Default Difficulty", multiitem_difficulties, crispy->defaultskill, true);
 
     M_DrawCrispnessSeparator(crispness_sep_crosshair, "Crosshair");
 
@@ -1767,7 +1863,8 @@ void M_ChangeMessages(int choice)
 //
 void M_EndGameResponse(int key)
 {
-    if (key != key_menu_confirm)
+    // [crispy] allow to confirm by pressing Enter key
+    if (key != key_menu_confirm && key != key_menu_forward)
 	return;
 		
     // [crispy] killough 5/26/98: make endgame quit if recording or playing back demo
@@ -1859,7 +1956,8 @@ void M_QuitResponse(int key)
 {
     extern int show_endoom;
 
-    if (key != key_menu_confirm)
+    // [crispy] allow to confirm by pressing Enter key
+    if (key != key_menu_confirm && key != key_menu_forward)
 	return;
     // [crispy] play quit sound only if the ENDOOM screen is also shown
     if (!netgame && show_endoom)
@@ -2217,12 +2315,13 @@ static int G_ReloadLevel(void)
 
 static int G_GotoNextLevel(void)
 {
-  byte doom_next[5][9] = {
+  byte doom_next[6][9] = {
     {12, 13, 19, 15, 16, 17, 18, 21, 14},
     {22, 23, 24, 25, 29, 27, 28, 31, 26},
     {32, 33, 34, 35, 36, 39, 38, 41, 37},
     {42, 49, 44, 45, 46, 47, 48, 51, 43},
-    {52, 53, 54, 55, 56, 59, 58, 11, 57},
+    {52, 53, 54, 55, 56, 59, 58, 61, 57},
+    {62, 63, 69, 65, 66, 67, 68, 11, 64},
   };
   byte doom2_next[33] = {
      2,  3,  4,  5,  6,  7,  8,  9, 10, 11,
@@ -2265,8 +2364,13 @@ static int G_GotoNextLevel(void)
       if (gamemode == registered)
         doom_next[2][7] = 11;
 
-      if (!crispy->haved1e5)
+      // [crispy] Sigil and Sigil II
+      if (!crispy->haved1e5 && !crispy->haved1e6)
         doom_next[3][7] = 11;
+      else if (!crispy->haved1e5 && crispy->haved1e6)
+        doom_next[3][7] = 61;
+      else if (crispy->haved1e5 && !crispy->haved1e6)
+        doom_next[4][7] = 11;
 
       if (gameversion == exe_chex)
       {
@@ -2332,6 +2436,8 @@ boolean M_Responder (event_t* ev)
     static  int     lasty = 0;
     static  int     mousex = 0;
     static  int     lastx = 0;
+    boolean mousextobutton = false;
+    int dir;
 
     // In testcontrols mode, none of the function keys should do anything
     // - the only key is escape to quit.
@@ -2379,25 +2485,38 @@ boolean M_Responder (event_t* ev)
 
         if (menuactive)
         {
-            if (ev->data3 < 0)
+            if (JOY_GET_DPAD(ev->data6) != JOY_DIR_NONE)
+            {
+                dir = JOY_GET_DPAD(ev->data6);
+            }
+            else if (JOY_GET_LSTICK(ev->data6) != JOY_DIR_NONE)
+            {
+                dir = JOY_GET_LSTICK(ev->data6);
+            }
+            else
+            {
+                dir = JOY_GET_RSTICK(ev->data6);
+            }
+
+            if (dir & JOY_DIR_UP)
             {
                 key = key_menu_up;
                 joywait = I_GetTime() + 5;
             }
-            else if (ev->data3 > 0)
+            else if (dir & JOY_DIR_DOWN)
             {
                 key = key_menu_down;
                 joywait = I_GetTime() + 5;
             }
-            if (ev->data2 < 0)
+            if (dir & JOY_DIR_LEFT)
             {
                 key = key_menu_left;
-                joywait = I_GetTime() + 2;
+                joywait = I_GetTime() + 5;
             }
-            else if (ev->data2 > 0)
+            else if (dir & JOY_DIR_RIGHT)
             {
                 key = key_menu_right;
-                joywait = I_GetTime() + 2;
+                joywait = I_GetTime() + 5;
             }
 
 #define JOY_BUTTON_MAPPED(x) ((x) >= 0)
@@ -2453,7 +2572,7 @@ boolean M_Responder (event_t* ev)
     }
     else
     {
-	if (ev->type == ev_mouse && mousewait < I_GetTime())
+	if (ev->type == ev_mouse && mousewait < I_GetTime() && menuactive)
 	{
 	    // [crispy] novert disables controlling the menus with the mouse
 	    if (!novert)
@@ -2479,24 +2598,26 @@ boolean M_Responder (event_t* ev)
 		key = key_menu_left;
 		mousewait = I_GetTime() + 5;
 		mousex = lastx -= 30;
+		mousextobutton = true;
 	    }
 	    else if (mousex > lastx+30)
 	    {
 		key = key_menu_right;
 		mousewait = I_GetTime() + 5;
 		mousex = lastx += 30;
+		mousextobutton = true;
 	    }
 		
 	    if (ev->data1&1)
 	    {
 		key = key_menu_forward;
-		mousewait = I_GetTime() + 15;
+		mousewait = I_GetTime() + 5;
 	    }
 			
 	    if (ev->data1&2)
 	    {
 		key = key_menu_back;
-		mousewait = I_GetTime() + 15;
+		mousewait = I_GetTime() + 5;
 	    }
 
 	    // [crispy] scroll menus with mouse wheel
@@ -2595,13 +2716,72 @@ boolean M_Responder (event_t* ev)
 	return true;
     }
 
+    // [crispy] Enter numeric value
+    if (numeric_enter)
+    {
+        switch(key)
+        {
+            case KEY_BACKSPACE:
+                if (numeric_entry_index > 0)
+                {
+                    numeric_entry_index--;
+                    numeric_entry_str[numeric_entry_index] = '\0';
+                }
+                break;
+            case KEY_ESCAPE:
+                numeric_enter = false;
+                I_StopTextInput();
+                break;
+            case KEY_ENTER:
+                if (numeric_entry_str[0] != '\0')
+                {
+                    numeric_entry = atoi(numeric_entry_str);
+                    currentMenu->menuitems[itemOn].routine(2);
+                }
+                else
+                {
+                    numeric_enter = false;
+                    I_StopTextInput();
+                }
+                break;
+            default:
+                if (ev->type != ev_keydown)
+                {
+                    break;
+                }
+
+                if (vanilla_keyboard_mapping)
+                {
+                    ch = ev->data1;
+                }
+                else
+                {
+                    ch = ev->data3;
+                }
+
+                if (ch >= '0' && ch <= '9' &&
+                        numeric_entry_index < NUMERIC_ENTRY_NUMDIGITS)
+                {
+                    numeric_entry_str[numeric_entry_index++] = ch;
+                    numeric_entry_str[numeric_entry_index] = '\0';
+                }
+                else
+                {
+                    break;
+                }
+        }
+        return true;
+    }
+
     // Take care of any messages that need input
     if (messageToPrint)
     {
 	if (messageNeedsInput)
         {
             if (key != ' ' && key != KEY_ESCAPE
-             && key != key_menu_confirm && key != key_menu_abort)
+             && key != key_menu_confirm && key != key_menu_abort
+             // [crispy] allow to confirm nightmare, end game and quit by pressing Enter key
+             && key != key_menu_forward)
             {
                 return false;
             }
@@ -2684,7 +2864,7 @@ boolean M_Responder (event_t* ev)
         {
 	    M_StartControlPanel ();
 	    currentMenu = &SoundDef;
-	    itemOn = sfx_vol;
+	    itemOn = currentMenu->lastOn; // [crispy] remember cursor position
 	    S_StartSoundOptional(NULL, sfx_mnuopn, sfx_swtchn); // [NS] Optional menu sounds.
 	    return true;
 	}
@@ -2726,15 +2906,14 @@ boolean M_Responder (event_t* ev)
         }
         else if (key == key_menu_gamma)    // gamma toggle
         {
-	    usegamma++;
-	    if (usegamma > 4+4) // [crispy] intermediate gamma levels
-		usegamma = 0;
-	    players[consoleplayer].message = DEH_String(gammamsg[usegamma]);
+	    crispy->gamma++;
+	    if (crispy->gamma > 4+13) // [crispy] intermediate gamma levels
+		crispy->gamma = 0;
+	    players[consoleplayer].message = DEH_String(gammamsg[crispy->gamma]);
 #ifndef CRISPY_TRUECOLOR
             I_SetPalette (W_CacheLumpName (DEH_String("PLAYPAL"),PU_CACHE));
 #else
             {
-		extern void R_InitColormaps (void);
 		I_SetPalette (0);
 		R_InitColormaps();
 		inhelpscreens = true;
@@ -2746,13 +2925,35 @@ boolean M_Responder (event_t* ev)
 	}
         // [crispy] those two can be considered as shortcuts for the IDCLEV cheat
         // and should be treated as such, i.e. add "if (!netgame)"
-        else if (!netgame && key != 0 && key == key_menu_reloadlevel)
+        // hovewer, allow while multiplayer demos
+        else if ((!netgame || netdemo) && key != 0 && key == key_menu_reloadlevel)
         {
+	    if (demoplayback)         
+	    {
+		if (crispy->demowarp)
+		{
+		// [crispy] enable screen render back before replaying
+		nodrawers = false;
+		singletics = false;
+		}
+		// [crispy] replay demo lump or file
+		G_DoPlayDemo();
+		return true;
+	    }
+	    else
 	    if (G_ReloadLevel())
 		return true;
         }
-        else if (!netgame && key != 0 && key == key_menu_nextlevel)
+        else if ((!netgame || netdemo) && key != 0 && key == key_menu_nextlevel)
         {
+	    if (demoplayback)
+	    {
+		// [crispy] go to next level
+		demo_gotonextlvl = true;
+		G_DemoGotoNextLevel(true);
+		return true;
+	    }
+	    else
 	    if (G_GotoNextLevel())
 		return true;
         }
@@ -2806,11 +3007,26 @@ boolean M_Responder (event_t* ev)
         // Slide slider left
 
 	if (currentMenu->menuitems[itemOn].routine &&
-	    currentMenu->menuitems[itemOn].status == 2)
+	    currentMenu->menuitems[itemOn].status)
 	{
-	    S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
-	    currentMenu->menuitems[itemOn].routine(0);
-	}
+            if (currentMenu->menuitems[itemOn].status == 2)
+            {
+                S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(0);
+            }
+            // [crispy] LR non-slider
+            else if (currentMenu->menuitems[itemOn].status == 3 && !mousextobutton)
+            {
+                S_StartSoundOptional(NULL, sfx_mnuact, sfx_pistol); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(0);
+            }
+            // [crispy] Numeric entry
+            else if (currentMenu->menuitems[itemOn].status == 4 && !mousextobutton)
+            {
+                S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(0);
+            }
+        }
 	return true;
     }
     else if (key == key_menu_right)
@@ -2818,11 +3034,26 @@ boolean M_Responder (event_t* ev)
         // Slide slider right
 
 	if (currentMenu->menuitems[itemOn].routine &&
-	    currentMenu->menuitems[itemOn].status == 2)
+	    currentMenu->menuitems[itemOn].status)
 	{
-	    S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
-	    currentMenu->menuitems[itemOn].routine(1);
-	}
+            if (currentMenu->menuitems[itemOn].status == 2)
+            {
+                S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(1);
+            }
+            // [crispy] LR non-slider
+            else if (currentMenu->menuitems[itemOn].status == 3 && !mousextobutton)
+            {
+                S_StartSoundOptional(NULL, sfx_mnuact, sfx_pistol); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(1);
+            }
+            // [crispy] Numeric entry
+            else if (currentMenu->menuitems[itemOn].status == 4 && !mousextobutton)
+            {
+                S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
+                currentMenu->menuitems[itemOn].routine(1);
+            }
+        }
 	return true;
     }
     else if (key == key_menu_forward)
@@ -2838,6 +3069,18 @@ boolean M_Responder (event_t* ev)
 		currentMenu->menuitems[itemOn].routine(1);      // right arrow
 		S_StartSoundOptional(NULL, sfx_mnusli, sfx_stnmov); // [NS] Optional menu sounds.
 	    }
+            else if (currentMenu->menuitems[itemOn].status == 3)
+            {
+                currentMenu->menuitems[itemOn].routine(1); // right arrow
+                S_StartSoundOptional(NULL, sfx_mnuact, sfx_pistol); // [NS] Optional menu sounds.
+            }
+            else if (currentMenu->menuitems[itemOn].status == 4) // [crispy]
+            {
+                currentMenu->menuitems[itemOn].routine(2); // enter key
+                numeric_entry_index = 0;
+                numeric_entry_str[0] = '\0';
+                S_StartSoundOptional(NULL, sfx_mnuact, sfx_pistol);
+            }
 	    else
 	    {
 		currentMenu->menuitems[itemOn].routine(itemOn);
@@ -2895,6 +3138,17 @@ boolean M_Responder (event_t* ev)
 	    S_StartSoundOptional(NULL, sfx_mnuact, sfx_swtchn); // [NS] Optional menu sounds.
 	    return true;
 	}
+	else if (currentMenu == &LoadDef || currentMenu == &SaveDef)
+	{
+	    if (savepage > 0)
+	    {
+		savepage--;
+		quickSaveSlot = -1;
+		M_ReadSaveStrings();
+		S_StartSoundOptional(NULL, sfx_mnumov, sfx_pstop);
+	    }
+	    return true;
+	}
     }
     else if (key == KEY_PGDN)
     {
@@ -2903,6 +3157,17 @@ boolean M_Responder (event_t* ev)
 	{
 	    M_CrispnessNext(0);
 	    S_StartSoundOptional(NULL, sfx_mnuact, sfx_swtchn); // [NS] Optional menu sounds.
+	    return true;
+	}
+	else if (currentMenu == &LoadDef || currentMenu == &SaveDef)
+	{
+	    if (savepage < savepage_max)
+	    {
+		savepage++;
+		quickSaveSlot = -1;
+		M_ReadSaveStrings();
+		S_StartSoundOptional(NULL, sfx_mnumov, sfx_pstop);
+	    }
 	    return true;
 	}
     }
@@ -2961,7 +3226,6 @@ void M_StartControlPanel (void)
 
 static void M_DrawOPLDev(void)
 {
-    extern void I_OPL_DevMessages(char *, size_t);
     char debug[1024];
     char *curr, *p;
     int line;
@@ -3154,6 +3418,14 @@ void M_Ticker (void)
     }
 }
 
+// [crispy]
+void M_SetDefaultDifficulty (void)
+{
+    // HMP (or skill #2) being the default, had to be placed at index 0 when drawn in the menu,
+    // so all difficulties 'real' positions had to be scaled by -2, hence +2 being added
+    // below in order to get the correct skill index when getting it from the skill enum.
+    NewDef.lastOn = ((crispy->defaultskill) + SKILL_HMP ) % NUM_SKILLS;
+}
 
 //
 // M_Init
@@ -3170,6 +3442,8 @@ void M_Init (void)
     messageString = NULL;
     messageLastMenuActive = menuactive;
     quickSaveSlot = -1;
+
+    M_SetDefaultDifficulty(); // [crispy] pre-select default difficulty
 
     // Here we could catch other version dependencies,
     //  like HELP1/2, and four episodes.
@@ -3202,9 +3476,17 @@ void M_Init (void)
     }
 
     // [crispy] Sigil
-    if (!crispy->haved1e5)
+    if (!crispy->haved1e5 && !crispy->haved1e6)
     {
         EpiDef.numitems = 4;
+    }
+    else if (crispy->haved1e5 != crispy->haved1e6)
+    {
+        EpiDef.numitems = 5;
+        if (crispy->haved1e6)
+        {
+            EpiDef.menuitems = EpisodeMenuSII;
+        }
     }
 
     // Versions of doom.exe before the Ultimate Doom release only had
@@ -3316,7 +3598,7 @@ void M_Init (void)
 	{
 		LoadDef_y = vstep + captionheight - SHORT(patchl->height) + SHORT(patchl->topoffset);
 		SaveDef_y = vstep + captionheight - SHORT(patchs->height) + SHORT(patchs->topoffset);
-		LoadDef.y = SaveDef.y = vstep + captionheight + vstep + SHORT(patchm->topoffset) - 7; // [crispy] see M_DrawSaveLoadBorder()
+		LoadDef.y = SaveDef.y = vstep + captionheight + vstep + SHORT(patchm->topoffset) - 15; // [crispy] moved up, so savegame date/time may appear above status bar
 		MouseDef.y = LoadDef.y;
 	}
     }

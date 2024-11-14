@@ -178,6 +178,10 @@ void P_LoadVertexes(int lump)
     {
         li->x = SHORT(ml->x) << FRACBITS;
         li->y = SHORT(ml->y) << FRACBITS;
+
+        // [crispy] initialize vertex coordinates *only* used in rendering
+        li->r_x = li->x;
+        li->r_y = li->y;
     }
 
     W_ReleaseLumpNum(lump);
@@ -230,6 +234,45 @@ void P_LoadSegs(int lump)
     W_ReleaseLumpNum(lump);
 }
 
+// [crispy] fix long wall wobble
+
+static angle_t anglediff(angle_t a, angle_t b)
+{
+    if (b > a)
+        return anglediff(b, a);
+
+    if (a - b < ANG180)
+        return a - b;
+    else // [crispy] wrap around
+        return b - a;
+}
+
+static void P_SegLengths (void)
+{
+    int i;
+
+    for (i = 0; i < numsegs; i++)
+    {
+        seg_t *const li = &segs[i];
+        int64_t dx, dy;
+
+        dx = li->v2->x - li->v1->x;
+        dy = li->v2->y - li->v1->y;
+
+        li->length = (uint32_t)(sqrt((double)dx*dx + (double)dy*dy)/2);
+
+        // [crispy] re-calculate angle used for rendering
+        viewx = li->v1->r_x;
+        viewy = li->v1->r_y;
+        li->r_angle = R_PointToAngleCrispy(li->v2->r_x, li->v2->r_y);
+        // [crispy] more than just a little adjustment?
+        // back to the original angle then
+        if (anglediff(li->r_angle, li->angle) > ANG60/2)
+        {
+            li->r_angle = li->angle;
+        }
+    }
+}
 
 /*
 =================
@@ -297,6 +340,19 @@ void P_LoadSectors(int lump)
         ss->tag = SHORT(ms->tag);
         ss->thinglist = NULL;
         ss->seqType = SEQTYPE_STONE;    // default seqType
+
+        // [crispy] WiggleFix: [kb] for R_FixWiggle()
+        ss->cachedheight = 0;
+
+        // [AM] Sector interpolation.  Even if we're
+        //      not running uncapped, the renderer still
+        //      uses this data.
+        ss->oldfloorheight = ss->floorheight;
+        ss->interpfloorheight = ss->floorheight;
+        ss->oldceilingheight = ss->ceilingheight;
+        ss->interpceilingheight = ss->ceilingheight;
+        // [crispy] inhibit sector interpolation during the 0th gametic
+        ss->oldgametic = -1;
     }
     W_ReleaseLumpNum(lump);
 }
@@ -655,6 +711,7 @@ void P_GroupLines(void)
 
 //=============================================================================
 
+lumpinfo_t *maplumpinfo;
 
 /*
 =================
@@ -691,9 +748,13 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
 
     P_InitThinkers();
     leveltime = 0;
+    oldleveltime = 0;  // [crispy] Track if game is running
 
     M_snprintf(lumpname, sizeof(lumpname), "MAP%02d", map);
     lumpnum = W_GetNumForName(lumpname);
+
+    maplumpinfo = lumpinfo[lumpnum];
+
     //
     // Begin processing map lumps
     // Note: most of this ordering is important
@@ -708,6 +769,10 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
     P_LoadSegs(lumpnum + ML_SEGS);
     rejectmatrix = W_CacheLumpNum(lumpnum + ML_REJECT, PU_LEVEL);
     P_GroupLines();
+
+    // [crispy] fix long wall wobble
+    P_SegLengths();
+
     bodyqueslot = 0;
     po_NumPolyobjs = 0;
     deathmatch_p = deathmatchstarts;
@@ -767,6 +832,12 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
     {                           // Probably fog ... don't use fullbright sprites
         LevelUseFullBright = false;
     }
+
+#ifdef CRISPY_TRUECOLOR
+    // [crispy] If true color is compiled in but disabled as an option,
+    // we still need to re-generate colormaps for proper colormaps[] array colors.
+    R_InitTrueColormaps(LevelUseFullBright ? "COLORMAP" : "FOGMAP");
+#endif
 
 // preload graphics
     if (precache)

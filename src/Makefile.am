@@ -1,26 +1,27 @@
 
-SUBDIRS = doom heretic hexen setup # strife
+SUBDIRS = doom heretic hexen strife setup
 
 execgamesdir = ${bindir}
 
 execgames_PROGRAMS = @PROGRAM_PREFIX@doom     \
                      @PROGRAM_PREFIX@heretic  \
                      @PROGRAM_PREFIX@hexen    \
+                     @PROGRAM_PREFIX@strife   \
                      @PROGRAM_PREFIX@server
-EXTRA_PROGRAMS =     @PROGRAM_PREFIX@strife
 
 noinst_PROGRAMS = @PROGRAM_PREFIX@setup
 
 SETUP_BINARIES = @PROGRAM_PREFIX@doom-setup$(EXEEXT)    \
                  @PROGRAM_PREFIX@heretic-setup$(EXEEXT) \
-                 @PROGRAM_PREFIX@hexen-setup$(EXEEXT)   
-#                @PROGRAM_PREFIX@strife-setup$(EXEEXT)
+                 @PROGRAM_PREFIX@hexen-setup$(EXEEXT)   \
+                 @PROGRAM_PREFIX@strife-setup$(EXEEXT)
 
 execgames_SCRIPTS = $(SETUP_BINARIES)
 
 AM_CFLAGS = -I$(top_srcdir)/textscreen            \
             -I$(top_srcdir)/opl                   \
             -I$(top_srcdir)/pcsound               \
+            -I$(top_srcdir)/win32                 \
             @SDLMIXER_CFLAGS@ @SDLNET_CFLAGS@
 
 # Common source files used by absolutely everything:
@@ -56,7 +57,7 @@ z_native.c           z_zone.h
 
 # Source files used by the game binaries (chocolate-doom, etc.)
 
-GAME_SOURCE_FILES=\
+GAME_BASE_FILES=\
 a11y.c               a11y.h                \
 aes_prng.c           aes_prng.h            \
 d_event.c            d_event.h             \
@@ -70,6 +71,7 @@ deh_str.c            deh_str.h             \
 gusconf.c            gusconf.h             \
 i_cdmus.c            i_cdmus.h             \
 i_endoom.c           i_endoom.h            \
+i_flmusic.c                                \
 i_glob.c             i_glob.h              \
 i_input.c            i_input.h             \
 i_joystick.c         i_joystick.h          \
@@ -81,9 +83,11 @@ i_sdlmusic.c                               \
 i_sdlsound.c                               \
 i_sound.c            i_sound.h             \
 i_timer.c            i_timer.h             \
+i_truecolor.c        i_truecolor.h         \
 i_video.c            i_video.h             \
 i_videohr.c          i_videohr.h           \
-i_winmusic.c         i_winmusic.h          \
+i_winmusic.c                               \
+midifallback.c       midifallback.h        \
 midifile.c           midifile.h            \
 mus2mid.c            mus2mid.h             \
 m_bbox.c             m_bbox.h              \
@@ -119,7 +123,21 @@ w_file_stdc.c                              \
 w_file_posix.c                             \
 w_file_win32.c                             \
 w_merge.c            w_merge.h             \
+$(top_builddir)/win32/win_opendir.c        \
+$(top_builddir)/win32/win_opendir.h
+
+
+MEMORY_NATIVE_SOURCE_FILES=\
+z_native.c           z_zone.h
+
+MEMORY_ZONE_SOURCE_FILES=\
 z_zone.c             z_zone.h
+
+if HAVE_ZPOOL
+GAME_SOURCE_FILES=$(GAME_BASE_FILES) $(MEMORY_ZONE_SOURCE_FILES)
+else
+GAME_SOURCE_FILES=$(GAME_BASE_FILES) $(MEMORY_NATIVE_SOURCE_FILES)
+endif
 
 DEHACKED_SOURCE_FILES =                    \
 deh_defs.h                                 \
@@ -143,7 +161,7 @@ EXTRA_LIBS =                                               \
                @SDLNET_LIBS@
 
 if HAVE_WINDRES
-@PROGRAM_PREFIX@doom_SOURCES=$(SOURCE_FILES_WITH_DEH) resource.rc
+@PROGRAM_PREFIX@doom_SOURCES=$(SOURCE_FILES_WITH_DEH) doom-res.rc
 else
 @PROGRAM_PREFIX@doom_SOURCES=$(SOURCE_FILES_WITH_DEH)
 endif
@@ -151,7 +169,7 @@ endif
 @PROGRAM_PREFIX@doom_LDADD = doom/libdoom.a $(EXTRA_LIBS)
 
 if HAVE_WINDRES
-@PROGRAM_PREFIX@heretic_SOURCES=$(SOURCE_FILES_WITH_DEH) resource.rc
+@PROGRAM_PREFIX@heretic_SOURCES=$(SOURCE_FILES_WITH_DEH) heretic-res.rc
 else
 @PROGRAM_PREFIX@heretic_SOURCES=$(SOURCE_FILES_WITH_DEH)
 endif
@@ -159,7 +177,7 @@ endif
 @PROGRAM_PREFIX@heretic_LDADD = heretic/libheretic.a $(EXTRA_LIBS)
 
 if HAVE_WINDRES
-@PROGRAM_PREFIX@hexen_SOURCES=$(SOURCE_FILES) resource.rc
+@PROGRAM_PREFIX@hexen_SOURCES=$(SOURCE_FILES) hexen-res.rc
 else
 @PROGRAM_PREFIX@hexen_SOURCES=$(SOURCE_FILES)
 endif
@@ -167,7 +185,7 @@ endif
 @PROGRAM_PREFIX@hexen_LDADD = hexen/libhexen.a $(EXTRA_LIBS)
 
 if HAVE_WINDRES
-@PROGRAM_PREFIX@strife_SOURCES=$(SOURCE_FILES_WITH_DEH) resource.rc
+@PROGRAM_PREFIX@strife_SOURCES=$(SOURCE_FILES_WITH_DEH) strife-res.rc
 else
 @PROGRAM_PREFIX@strife_SOURCES=$(SOURCE_FILES_WITH_DEH)
 endif
@@ -219,7 +237,6 @@ endif
 
 EXTRA_DIST =                        \
         CMakeLists.txt              \
-        icon.c                      \
         Doom_Screensaver.desktop.in \
         manifest.xml
 
@@ -227,8 +244,8 @@ metainfodir = $(prefix)/share/metainfo
 metainfo_DATA =                             \
         @PACKAGE_RDNS@.Doom.metainfo.xml    \
         @PACKAGE_RDNS@.Heretic.metainfo.xml \
-        @PACKAGE_RDNS@.Hexen.metainfo.xml   
-#       @PACKAGE_RDNS@.Strife.metainfo.xml
+        @PACKAGE_RDNS@.Hexen.metainfo.xml   \
+        @PACKAGE_RDNS@.Strife.metainfo.xml
 
 @PACKAGE_RDNS@.Doom.metainfo.xml : Doom.metainfo.xml
 	cp Doom.metainfo.xml $@
@@ -246,8 +263,8 @@ appdir = $(prefix)/share/applications
 app_DATA =                                 \
            @PACKAGE_RDNS@.Doom.desktop    \
            @PACKAGE_RDNS@.Heretic.desktop \
-           @PACKAGE_RDNS@.Hexen.desktop   
-#          @PACKAGE_RDNS@.Strife.desktop
+           @PACKAGE_RDNS@.Hexen.desktop   \
+           @PACKAGE_RDNS@.Strife.desktop
 
 @PACKAGE_RDNS@.Doom.desktop : Doom.desktop
 	cp Doom.desktop $@
@@ -267,19 +284,12 @@ screensaver_DATA = @PACKAGE_RDNS@.Doom_Screensaver.desktop
 @PACKAGE_RDNS@.Doom_Screensaver.desktop: Doom_Screensaver.desktop
 	cp Doom_Screensaver.desktop $@
 
-CLEANFILES = $(execgames_SCRIPTS) $(app_DATA) $(screensaver_DATA)
+CLEANFILES = $(execgames_SCRIPTS) $(metainfo_DATA) $(app_DATA) $(screensaver_DATA)
 
 .rc.o:
 	$(WINDRES) $< -o $@
 %.o : %.rc
 	$(WINDRES) $< -o $@
-
-if HAVE_ICONS
-
-icon.c : $(top_builddir)/data/doom.png
-	$(top_builddir)/data/convert-icon $(top_builddir)/data/doom.png $@
-
-endif
 
 midiread : midifile.c
 	$(CC) -DTEST $(CFLAGS) @LDFLAGS@ midifile.c -o $@

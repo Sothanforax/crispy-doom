@@ -25,14 +25,13 @@
 #include "i_system.h"
 #include "d_iwad.h"
 #include "m_argv.h"
+#include "m_misc.h"
 #include "w_wad.h"
 
 #include "deh_defs.h"
 #include "deh_io.h"
 #include "deh_main.h"
 
-extern deh_section_t *deh_section_types[];
-extern const char *deh_signatures[];
 
 static boolean deh_initialized = false;
 
@@ -51,6 +50,22 @@ boolean deh_allow_long_cheats = true; // [crispy] always allow
 // If false, dehacked cheat replacements are ignored.
 
 boolean deh_apply_cheats = true;
+
+static char **deh_filenames;
+
+void AddDEHFileName(const char *filename)
+{
+    static int i;
+
+    deh_filenames = I_Realloc(deh_filenames, (i + 2) * sizeof(*deh_filenames));
+    deh_filenames[i++] = M_StringDuplicate(filename);
+    deh_filenames[i] = NULL;
+}
+
+char **DEH_GetFileNames(void)
+{
+    return deh_filenames;
+}
 
 void DEH_Checksum(sha1_digest_t digest)
 {
@@ -144,7 +159,7 @@ static boolean IsWhitespace(char *s)
 
 // Strip whitespace from the start and end of a string
 
-static char *CleanString(char *s)
+char *CleanString(char *s) // [crispy] un-static
 {
     char *strending;
 
@@ -431,6 +446,8 @@ int DEH_LoadFile(const char *filename)
         fprintf(stderr, "DEH_LoadFile: Unable to open %s\n", filename);
         return 0;
     }
+
+    AddDEHFileName(filename);
 
     DEH_ParseContext(context);
 

@@ -47,7 +47,10 @@ int M_CheckParmWithArgs(const char *check, int num_args)
 {
     int i;
 
-    for (i = 1; i < myargc - num_args; i++)
+    // Check if myargv[i] has been set to NULL in LoadResponseFile(),
+    // which may call I_Error(), which in turn calls M_ParmExists("-nogui").
+
+    for (i = 1; i < myargc - num_args && myargv[i]; i++)
     {
 	if (!strcasecmp(check, myargv[i]))
 	    return i;
@@ -86,7 +89,7 @@ static void LoadResponseFile(int argv_index, const char *filename)
     int i, k;
 
     // Read the response file into memory
-    handle = fopen(filename, "rb");
+    handle = M_fopen(filename, "rb");
 
     if (handle == NULL)
     {
@@ -128,6 +131,11 @@ static void LoadResponseFile(int argv_index, const char *filename)
     memset(newargv, 0, sizeof(char *) * MAXARGVS);
 
     // Copy all the arguments in the list up to the response file
+
+    if (argv_index >= MAXARGVS)
+    {
+        I_Error("Too many arguments up to the response file!");
+    }
 
     for (i=0; i<argv_index; ++i)
     {
@@ -182,6 +190,12 @@ static void LoadResponseFile(int argv_index, const char *filename)
 
             infile[k] = '\0';
             ++k;
+
+            if (newargc >= MAXARGVS)
+            {
+                I_Error("Too many arguments in the response file!");
+            }
+
             newargv[newargc++] = M_StringDuplicate(argstart);
         }
         else
@@ -199,13 +213,23 @@ static void LoadResponseFile(int argv_index, const char *filename)
             // Cut off the end of the argument at the first space
 
             infile[k] = '\0';
-
             ++k;
+
+            if (newargc >= MAXARGVS)
+            {
+                I_Error("Too many arguments in the response file!");
+            }
+
             newargv[newargc++] = M_StringDuplicate(argstart);
         }
     }
 
     // Add arguments following the response file argument
+
+    if (newargc + myargc - (argv_index + 1) >= MAXARGVS)
+    {
+        I_Error("Too many arguments following the response file!");
+    }
 
     for (i=argv_index + 1; i<myargc; ++i)
     {
@@ -291,14 +315,76 @@ enum
     FILETYPE_IWAD =    0x2,
     FILETYPE_PWAD =    0x4,
     FILETYPE_DEH =     0x8,
+    FILETYPE_DEMO =    0x10,
 };
+
+static boolean FileIsDemoLump(const char *filename)
+{
+    FILE *handle;
+    int count, ver;
+    byte buf[12], *p = buf;
+
+    handle = M_fopen(filename, "rb");
+
+    if (handle == NULL)
+    {
+        return false;
+    }
+
+    count = fread(buf, 1, sizeof(buf), handle);
+    fclose(handle);
+
+    if (count != sizeof(buf))
+    {
+        return false;
+    }
+
+    ver = *p++;
+
+    if (ver >= 0 && ver <= 4) // v1.0/v1.1/v1.2
+    {
+        p--;
+    }
+    else
+    {
+        switch (ver)
+        {
+            case 104: // v1.4
+            case 105: // v1.5
+            case 106: // v1.6/v1.666
+            case 107: // v1.7/v1.7a
+            case 108: // v1.8
+            case 109: // v1.9
+            case 111: // v1.91 hack
+                break;
+            default:
+                return false;
+                break;
+        }
+    }
+
+    if (*p++ > 5) // skill
+    {
+        return false;
+    }
+    if (*p++ > 9) // episode
+    {
+        return false;
+    }
+    if (*p++ > 99) // map
+    {
+        return false;
+    }
+
+    return true;
+}
 
 static int GuessFileType(const char *name)
 {
     int ret = FILETYPE_UNKNOWN;
     const char *base;
     char *lower;
-    static boolean iwad_found = false;
+    static boolean iwad_found = false, demo_found = false;
 
     base = M_BaseName(name);
     lower = M_StringDuplicate(base);
@@ -311,10 +397,23 @@ static int GuessFileType(const char *name)
         ret = FILETYPE_IWAD;
         iwad_found = true;
     }
-    else if (M_StringEndsWith(lower, ".wad") ||
-             M_StringEndsWith(lower, ".lmp"))
+    else if (M_StringEndsWith(lower, ".wad"))
     {
         ret = FILETYPE_PWAD;
+    }
+    else if (M_StringEndsWith(lower, ".lmp"))
+    {
+        // only ever add one argument to the -playdemo parameter
+
+        if (demo_found == false && FileIsDemoLump(name))
+        {
+            ret = FILETYPE_DEMO;
+            demo_found = true;
+        }
+        else
+        {
+            ret = FILETYPE_PWAD;
+        }
     }
     else if (M_StringEndsWith(lower, ".deh") ||
              M_StringEndsWith(lower, ".bex") || // [crispy] *.bex
@@ -356,10 +455,11 @@ void M_AddLooseFiles(void)
         return;
     }
 
-    // allocate space for up to three additional regular parameters
+    // allocate space for up to four additional regular parameters
+    // (-iwad, -merge, -deh, -playdemo)
 
-    arguments = malloc((myargc + 3) * sizeof(*arguments));
-    memset(arguments, 0, (myargc + 3) * sizeof(*arguments));
+    arguments = malloc((myargc + 4) * sizeof(*arguments));
+    memset(arguments, 0, (myargc + 4) * sizeof(*arguments));
 
     // check the command line and make sure it does not already
     // contain any regular parameters or response files
@@ -409,6 +509,12 @@ void M_AddLooseFiles(void)
         arguments[myargc].type = FILETYPE_DEH - 1;
         myargc++;
     }
+    if (types & FILETYPE_DEMO)
+    {
+        arguments[myargc].str = M_StringDuplicate("-playdemo");
+        arguments[myargc].type = FILETYPE_DEMO - 1;
+        myargc++;
+    }
 
     newargv = malloc(myargc * sizeof(*newargv));
 
@@ -426,6 +532,7 @@ void M_AddLooseFiles(void)
 
     free(arguments);
 
+    free(myargv);
     myargv = newargv;
 }
 #endif

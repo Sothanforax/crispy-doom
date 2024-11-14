@@ -1,9 +1,9 @@
-AC_INIT(Crispy Doom, 5.11.1,
+AC_INIT(Crispy Doom, 7.0.0,
         fabian@greffrath.com, crispy-doom)
 
 PACKAGE_SHORTNAME=${PACKAGE_NAME% Doom}
 PACKAGE_SHORTDESC="Limit-removing enhanced-resolution Doom source port"
-PACKAGE_COPYRIGHT="Copyright (C) 1993-2022"
+PACKAGE_COPYRIGHT="Copyright (C) 1993-2024"
 PACKAGE_LICENSE="GNU General Public License, version 2"
 PACKAGE_MAINTAINER="Fabian Greffrath"
 PACKAGE_URL="http://fabiangreffrath.github.io/crispy-doom"
@@ -31,9 +31,41 @@ then
         CFLAGS="-O$OPT_LEVEL -g $WARNINGS $orig_CFLAGS"
 fi
 
-PKG_CHECK_MODULES(SDL, [sdl2 >= 2.0.7])
-PKG_CHECK_MODULES(SDLMIXER, [SDL2_mixer >= 2.0.2])
-PKG_CHECK_MODULES(SDLNET, [SDL2_net >= 2.0.0])
+AC_CANONICAL_TARGET
+TARGET_OS=""
+AS_CASE([$target_cpu],
+        [x86_64],
+        [
+            TARGET_OS="x64"
+        ],
+        [aarch64*|arm*],
+        [
+            TARGET_OS="arm"
+        ],
+        [i?86|arm*],
+        [
+            TARGET_OS="32"
+        ])
+AC_SUBST([TARGET_OS])
+
+PKG_CHECK_MODULES(SDL, [sdl2 >= 2.0.14])
+# Check for SDL2_mixer
+AC_ARG_ENABLE([sdl2mixer],
+AS_HELP_STRING([--disable-sdl2mixer], [Disable SDL2_mixer support])
+)
+AS_IF([test "x$enable_sdl2mixer" != xno], [
+    PKG_CHECK_MODULES(SDLMIXER, [SDL2_mixer >= 2.0.2])], [
+    AC_DEFINE([DISABLE_SDL2MIXER], [1], [SDL2_mixer disabled])
+])
+
+# Check for networking
+AC_ARG_ENABLE([sdl2net],
+AS_HELP_STRING([--disable-sdl2net], [Disable SDL2_net support])
+)
+AS_IF([test "x$enable_sdl2net" != xno], [
+    PKG_CHECK_MODULES(SDLNET, [SDL2_net >= 2.0.0])], [
+    AC_DEFINE([DISABLE_SDL2NET], [1], [SDL2_net disabled])
+])
 
 # Check for bash-completion.
 AC_ARG_ENABLE([bash-completion],
@@ -97,6 +129,14 @@ AS_IF([test "x$with_zlib" != xno], [
     ])
 ])
 
+# Check for memory pool debugging.
+AC_ARG_ENABLE([zpool],
+AS_HELP_STRING([--disable-zpool], [Disable memory pools for debugging])
+)
+AS_IF([test "x$enable_zpool" != xno], [], [
+    AC_DEFINE([DISABLE_ZPOOL], [1], [Memory pooling disabled])
+])
+
 # Check for libsamplerate.
 AC_ARG_WITH([libsamplerate],
 AS_HELP_STRING([--without-libsamplerate],
@@ -133,6 +173,24 @@ AS_IF([test "x$with_libpng" != xno], [
     ])
 ])
 
+# Check for fluidsynth.
+AC_ARG_WITH([fluidsynth],
+AS_HELP_STRING([--without-fluidsynth],
+    [Build without fluidsynth @<:@default=check@:>@]),
+[],
+[
+    [with_fluidsynth=check]
+])
+AS_IF([test "x$with_fluidsynth" != xno] && [test "x$enable_sdl2mixer" != xno], [
+    PKG_CHECK_MODULES(FLUIDSYNTH, fluidsynth >= 2.2.0, [
+        AC_DEFINE([HAVE_FLUIDSYNTH], [1], [fluidsynth installed])
+    ], [
+        AS_IF([test "x$with_fluidsynth" != xcheck], [AC_MSG_FAILURE(
+            [--with-fluidsynth was given, but test for fluidsynth failed])
+        ])
+    ])
+])
+
 # [crispy] true-color rendering as a compile-time option
 AC_ARG_ENABLE([truecolor],
 AS_HELP_STRING([--enable-truecolor],
@@ -143,11 +201,11 @@ AS_IF([test "x$enable_truecolor" = "xyes"], [
 
 # TODO: We currently link everything against libraries that don't need it.
 # Use the specific library CFLAGS/LIBS variables instead of setting them here.
-CFLAGS="$CFLAGS $SDL_CFLAGS ${SAMPLERATE_CFLAGS:-} ${PNG_CFLAGS:-} ${LIBZ_CFLAGS:-}"
-LDFLAGS="$LDFLAGS $SDL_LIBS ${SAMPLERATE_LIBS:-} ${PNG_LIBS:-} ${LIBZ_LIBS:-}"
+CFLAGS="$CFLAGS $SDL_CFLAGS ${SAMPLERATE_CFLAGS:-} ${PNG_CFLAGS:-} ${FLUIDSYNTH_CFLAGS:-} ${LIBZ_CFLAGS:-}"
+LDFLAGS="$LDFLAGS $SDL_LIBS ${SAMPLERATE_LIBS:-} ${PNG_LIBS:-} ${FLUIDSYNTH_LIBS:-} ${LIBZ_LIBS:-}"
 case "$host" in
   *-*-mingw* | *-*-cygwin* | *-*-msvc* )
-    LDFLAGS="$LDFLAGS -lwinmm"
+    LDFLAGS="$LDFLAGS -lwinmm -lshlwapi"
     ;;
   *)
 esac
@@ -190,6 +248,7 @@ AM_CONDITIONAL(HAVE_BASH_COMPLETION, [test "x$enable_bash_completion" != xno])
 AM_CONDITIONAL(HAVE_DOC, [test "x$enable_doc" != xno])
 AM_CONDITIONAL(HAVE_FONTS, [test "x$enable_fonts" != xno])
 AM_CONDITIONAL(HAVE_ICONS, [test "x$enable_icons" != xno])
+AM_CONDITIONAL(HAVE_ZPOOL, [test "x$enable_zpool" != xno])
 
 dnl Automake v1.8.0 is required, please upgrade!
 
@@ -249,21 +308,24 @@ pkg/osx/Info.plist
 rpm.spec
 data/Makefile
 src/Makefile
+src/doom-res.rc
 src/Doom.metainfo.xml
 src/Doom.desktop
 src/Doom_Screensaver.desktop
 src/doom/Makefile
+src/heretic-res.rc
 src/Heretic.metainfo.xml
 src/Heretic.desktop
 src/heretic/Makefile
+src/hexen-res.rc
 src/Hexen.metainfo.xml
 src/Hexen.desktop
 src/hexen/Makefile
-src/resource.rc
 src/setup-res.rc
 src/setup/Makefile
 src/setup/Setup.desktop
 src/setup/setup-manifest.xml
+src/strife-res.rc
 src/Strife.metainfo.xml
 src/Strife.desktop
 src/strife/Makefile

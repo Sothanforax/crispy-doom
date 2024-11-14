@@ -21,6 +21,8 @@
 #define __I_VIDEO__
 
 #include "doomtype.h"
+#include "i_truecolor.h"
+#include "m_fixed.h" // [crispy] fixed_t
 #include "crispy.h"
 
 // Screen width and height.
@@ -36,6 +38,7 @@ extern int SCREENHEIGHT;
 extern int NONWIDEWIDTH; // [crispy] non-widescreen SCREENWIDTH
 extern int WIDESCREENDELTA; // [crispy] horizontal widescreen offset
 void I_GetScreenDimensions (void); // [crispy] re-calculate WIDESCREENDELTA
+void I_ToggleVsync (void); // [crispy] calls native SDL vsync toggle
 
 // Screen height used when aspect_ratio_correct=true.
 
@@ -64,6 +67,11 @@ void I_SetPalette (int palette);
 extern const pixel_t I_MapRGB (const uint8_t r, const uint8_t g, const uint8_t b);
 #endif
 
+extern byte gamma2table[18][256];
+void I_SetGammaTable (void);
+
+extern fixed_t fractionaltic;
+
 void I_UpdateNoBlit (void);
 void I_FinishUpdate (void);
 
@@ -80,6 +88,7 @@ void I_DisplayFPSDots(boolean dots_on);
 void I_BindVideoVariables(void);
 
 void I_InitWindowTitle(void);
+void I_RegisterWindowIcon(const unsigned int *icon, int width, int height);
 void I_InitWindowIcon(void);
 
 // Called before processing any tics in a frame (just after displaying a frame).
@@ -91,6 +100,8 @@ void I_StartFrame (void);
 // Quick syncronous operations are performed here.
 
 void I_StartTic (void);
+
+void I_StartDisplay (void); // [crispy]
 
 // Enable the loading disk image displayed when reading from disk.
 
@@ -112,10 +123,15 @@ extern int integer_scaling;
 extern int vga_porch_flash;
 extern int force_software_renderer;
 
+extern int png_screenshots;
+
 extern char *window_position;
 void I_GetWindowPosition(int *x, int *y, int w, int h);
 
 // Joystic/gamepad hysteresis
 extern unsigned int joywait;
+
+extern int usemouse;
+
 
 #endif

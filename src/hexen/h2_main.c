@@ -32,6 +32,7 @@
 #include "s_sound.h"
 #include "i_input.h"
 #include "i_joystick.h"
+#include "i_swap.h" // [crispy] SHORT()
 #include "i_system.h"
 #include "i_timer.h"
 #include "m_argv.h"
@@ -41,6 +42,9 @@
 #include "p_local.h"
 #include "v_video.h"
 #include "w_main.h"
+#include "am_map.h"
+
+#include "hexen_icon.c"
 
 // MACROS ------------------------------------------------------------------
 
@@ -68,10 +72,7 @@ void S_InitScript(void);
 
 // PUBLIC FUNCTION PROTOTYPES ----------------------------------------------
 
-void H2_ProcessEvents(void);
-void H2_DoAdvanceDemo(void);
 void H2_AdvanceDemo(void);
-void H2_StartTitle(void);
 void H2_PageTicker(void);
 
 // PRIVATE FUNCTION PROTOTYPES ---------------------------------------------
@@ -84,15 +85,15 @@ static void DrawAndBlit(void);
 static void CreateSavePath(void);
 static void WarpCheck(void);
 
+static void CrispyDrawStats(void); // [crispy]
+
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
-extern boolean automapactive;
-extern boolean MenuActive;
-extern boolean askforquit;
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
 GameMode_t gamemode;
+GameVersion_t gameversion = exe_hexen_1_1;
 static const char *gamedescription;
 char *iwadfile;
 static char demolumpname[9];    // Demo lump to start playing.
@@ -172,6 +173,8 @@ void D_BindVariables(void)
 
     M_BindIntVariable("graphical_startup",      &graphical_startup);
     M_BindIntVariable("mouse_sensitivity",      &mouseSensitivity);
+    M_BindIntVariable("mouse_sensitivity_x2",   &mouseSensitivity_x2);
+    M_BindIntVariable("mouse_sensitivity_y",    &mouseSensitivity_y);
     M_BindIntVariable("sfx_volume",             &snd_MaxVolume);
     M_BindIntVariable("music_volume",           &snd_MusicVolume);
     M_BindIntVariable("messageson",             &messageson);
@@ -194,10 +197,27 @@ void D_BindVariables(void)
     }
 
     // [crispy] bind "crispness" config variables
+    M_BindIntVariable("crispy_automapoverlay",  &crispy->automapoverlay);
+    M_BindIntVariable("crispy_automaprotate",   &crispy->automaprotate);
+    M_BindIntVariable("crispy_bobfactor",       &crispy->bobfactor);
+    M_BindIntVariable("crispy_centerweapon",    &crispy->centerweapon);
+    M_BindIntVariable("crispy_defaultskill",    &crispy->defaultskill);
+    M_BindIntVariable("crispy_fpslimit",        &crispy->fpslimit);
+    M_BindIntVariable("crispy_freelook",        &crispy->freelook_hh);
+    M_BindIntVariable("crispy_gamma",           &crispy->gamma);
     M_BindIntVariable("crispy_hires",           &crispy->hires);
+    M_BindIntVariable("crispy_mouselook",       &crispy->mouselook);
+    M_BindIntVariable("crispy_playercoords",    &crispy->playercoords);
+    M_BindIntVariable("crispy_soundmono",       &crispy->soundmono);
+#ifdef CRISPY_TRUECOLOR
+    M_BindIntVariable("crispy_truecolor",       &crispy->truecolor);
+#endif
+    M_BindIntVariable("crispy_smoothlight",     &crispy->smoothlight);
     M_BindIntVariable("crispy_smoothscaling",   &crispy->smoothscaling);
     M_BindIntVariable("crispy_vsync",           &crispy->vsync);
     M_BindIntVariable("crispy_widescreen",      &crispy->widescreen);
+    M_BindIntVariable("crispy_uncapped",        &crispy->uncapped);
+    M_BindIntVariable("crispy_brightmaps",      &crispy->brightmaps);
 }
 
 // Set the default directory where hub savegames are saved.
@@ -361,6 +381,83 @@ void D_SetGameDescription(void)
     }
 }
 
+static const struct
+{
+    const char *description;
+    const char *cmdline;
+    GameVersion_t version;
+} gameversions[] = {
+    {"Hexen 1.1",            "1.1",        exe_hexen_1_1},
+    {"Hexen 1.1 (alt)",      "1.1r2",      exe_hexen_1_1r2},
+    { NULL,                  NULL,         0},
+};
+
+// Initialize the game version
+
+static void InitGameVersion(void)
+{
+    int p;
+
+    //!
+    // @arg <version>
+    // @category compat
+    //
+    // Emulate a specific version of Hexen.
+    // Valid values are "1.1" and "1.1r2".
+    //
+
+    p = M_CheckParmWithArgs("-gameversion", 1);
+
+    if (p)
+    {
+        int i;
+        for (i=0; gameversions[i].description != NULL; ++i)
+        {
+            if (!strcmp(myargv[p+1], gameversions[i].cmdline))
+            {
+                gameversion = gameversions[i].version;
+                break;
+            }
+        }
+
+        if (gameversions[i].description == NULL)
+        {
+            printf("Supported game versions:\n");
+
+            for (i=0; gameversions[i].description != NULL; ++i)
+            {
+                printf("\t%s (%s)\n", gameversions[i].cmdline,
+                        gameversions[i].description);
+            }
+
+            I_Error("Unknown game version '%s'", myargv[p+1]);
+        }
+    }
+    else
+    {
+        // Determine automatically
+
+        gameversion = exe_hexen_1_1;
+    }
+}
+
+void PrintGameVersion(void)
+{
+    int i;
+
+    for (i=0; gameversions[i].description != NULL; ++i)
+    {
+        if (gameversions[i].version == gameversion)
+        {
+            printf("Emulating the behavior of the "
+                   "'%s' executable.\n", gameversions[i].description);
+            break;
+        }
+    }
+}
+
+static const char *const loadparms[] = {"-file", "-merge", NULL}; // [crispy]
+
 //==========================================================================
 //
 // H2_Main
@@ -376,7 +473,6 @@ void D_DoomMain(void)
     I_AtExit(D_HexenQuitMessage, false);
     startepisode = 1;
     autostart = false;
-    startskill = sk_medium;
     startmap = 1;
     gamemode = commercial;
 
@@ -421,6 +517,9 @@ void D_DoomMain(void)
 
     I_AtExit(M_SaveDefaults, false);
 
+    // [crispy] set defaultskill after loading config
+    startskill = (crispy->defaultskill + SKILL_HMP) % NUM_SKILLS;
+
     // Now that the savedir is loaded, make sure it exists
     CreateSavePath();
 
@@ -442,12 +541,12 @@ void D_DoomMain(void)
     D_AddFile(iwadfile);
     W_CheckCorrectIWAD(hexen);
     D_IdentifyVersion();
+    InitGameVersion();
     D_SetGameDescription();
     AdjustForMacIWAD();
 
     //!
     // @category game
-    // @category mod
     //
     // Mana pickups give 50% more mana. This option is not allowed when recording a
     // demo, playing back a demo or when starting a network game.
@@ -457,7 +556,6 @@ void D_DoomMain(void)
 
     //!
     // @category game
-    // @category mod
     //
     // Fast monsters. This option is not allowed when recording a demo,
     // playing back a demo or when starting a network game.
@@ -467,7 +565,6 @@ void D_DoomMain(void)
 
     //!
     // @category game
-    // @category mod
     //
     // Automatic use of Quartz flasks and Mystic urns.
     //
@@ -479,7 +576,7 @@ void D_DoomMain(void)
     //
     // Disable auto-loading of .wad files.
     //
-    if (!M_ParmExists("-noautoload"))
+    if (!M_ParmExists("-noautoload") && gamemode != shareware)
     {
         char *autoload_dir;
         autoload_dir = M_GetAutoloadDir("hexen.wad", true);
@@ -515,7 +612,7 @@ void D_DoomMain(void)
     I_CheckIsScreensaver();
     I_InitTimer();
     I_InitJoystick();
-    I_InitSound(false);
+    I_InitSound(hexen);
     I_InitMusic();
 
     ST_Message("NET_Init: Init networking subsystem.\n");
@@ -545,6 +642,8 @@ void D_DoomMain(void)
 
     ST_Message("D_CheckNetGame: Checking network game status.\n");
     D_CheckNetGame();
+
+    PrintGameVersion();
 
     ST_Message("SB_Init: Loading patches.\n");
     SB_Init();
@@ -725,6 +824,31 @@ static void HandleArgs(void)
         autostart = true;
     }
 
+    // [crispy] add wad files from autoload PWAD directories
+
+    if (!M_ParmExists("-noautoload") && gamemode != shareware)
+    {
+        int i;
+
+        for (i = 0; loadparms[i]; i++)
+        {
+            int p;
+            p = M_CheckParmWithArgs(loadparms[i], 1);
+            if (p)
+            {
+                while (++p != myargc && myargv[p][0] != '-')
+                {
+                    char *autoload_dir;
+                    if ((autoload_dir = M_GetAutoloadDir(M_BaseName(myargv[p]), false)))
+                    {
+                        W_AutoLoadWADs(autoload_dir);
+                        free(autoload_dir);
+                    }
+                }
+            }
+        }
+    }
+
     //!
     // @arg <demo>
     // @category demo
@@ -885,15 +1009,17 @@ void H2_GameLoop(void)
     {
         char filename[20];
         M_snprintf(filename, sizeof(filename), "debug%i.txt", consoleplayer);
-        debugfile = fopen(filename, "w");
+        debugfile = M_fopen(filename, "w");
     }
     I_SetWindowTitle(gamedescription);
     I_GraphicsCheckCommandLine();
     I_SetGrabMouseCallback(D_GrabMouseCallback);
+    I_RegisterWindowIcon(hexen_icon_data, hexen_icon_w, hexen_icon_h);
     I_InitGraphics();
 
     while (1)
     {
+        static int oldgametic;
         // Frame syncronous IO operations
         I_StartFrame();
 
@@ -901,8 +1027,12 @@ void H2_GameLoop(void)
         // Will run at least one tic
         TryRunTics();
 
-        // Move positional sounds
-        S_UpdateSounds(players[displayplayer].mo);
+        if (oldgametic < gametic)
+        {
+            // Move positional sounds
+            S_UpdateSounds(players[displayplayer].mo);
+            oldgametic = gametic;
+        }
 
         DrawAndBlit();
 
@@ -958,6 +1088,13 @@ void H2_ProcessEvents(void)
 
 static void DrawAndBlit(void)
 {
+    if (crispy->uncapped)
+    {
+        I_StartDisplay();
+        G_FastResponder();
+        G_PrepTiccmd();
+    }
+
     // Change the view size if needed
     if (setsizeneeded)
     {
@@ -972,17 +1109,25 @@ static void DrawAndBlit(void)
             {
                 break;
             }
-            if (automapactive)
+            if (automapactive && !crispy->automapoverlay)
             {
+                // [crispy] update automap while playing
+                R_RenderPlayerView(&players[displayplayer]);
                 AM_Drawer();
             }
             else
             {
                 R_RenderPlayerView(&players[displayplayer]);
             }
+            if (automapactive && crispy->automapoverlay)
+            {
+                AM_Drawer();
+                BorderNeedRefresh = true;
+            }
             CT_Drawer();
             UpdateState |= I_FULLVIEW;
             SB_Drawer();
+            CrispyDrawStats();
             break;
         case GS_INTERMISSION:
             IN_Drawer();
@@ -1050,6 +1195,60 @@ static void DrawMessage(void)
     {
         MN_DrTextA(player->message, 160 - MN_TextAWidth(player->message) / 2,
                    1);
+    }
+}
+
+int right_widget_w, right_widget_h; // [crispy]
+
+static void CrispyDrawStats (void)
+{
+    static short height, coord_x, coord_w;
+    char str[32];
+    player_t *const player = &players[consoleplayer];
+    int right_widget_x;
+
+    if (!height || !coord_x || !coord_w)
+    {
+        const int FontABaseLump = W_GetNumForName("FONTA_S") + 1;
+        const patch_t *const p = W_CacheLumpNum(FontABaseLump + 'A' - 33, PU_CACHE);
+
+        height = SHORT(p->height) + 1;
+        coord_w = 7 * SHORT(p->width);
+        coord_x = ORIGWIDTH - coord_w;
+    }
+
+    right_widget_w = 0;
+    right_widget_h = 0;
+    right_widget_x = coord_x + WIDESCREENDELTA;
+
+    if (crispy->playercoords == WIDGETS_ALWAYS || (automapactive && crispy->playercoords == WIDGETS_AUTOMAP))
+    {
+        right_widget_w = coord_w;
+        right_widget_h = 3 * height + 2;
+
+        M_snprintf(str, sizeof(str), "X %-5d", player->mo->x>>FRACBITS);
+        MN_DrTextA(str, right_widget_x, 1*height);
+
+        M_snprintf(str, sizeof(str), "Y %-5d", player->mo->y>>FRACBITS);
+        MN_DrTextA(str, right_widget_x, 2*height);
+
+        M_snprintf(str, sizeof(str), "A %-5d", player->mo->angle/ANG1);
+        MN_DrTextA(str, right_widget_x, 3*height);
+
+        if (player->cheats & CF_SHOWFPS)
+        {
+            right_widget_h += height + 1;
+            M_snprintf(str, sizeof(str), "%d FPS", crispy->fps);
+            MN_DrTextA(str, right_widget_x, 4*height + 1);
+        }
+    }
+    else if (player->cheats & CF_SHOWFPS)
+    {
+        right_widget_w = coord_w;
+        right_widget_h = height + 2;
+
+        M_snprintf(str, sizeof(str), "%d FPS", crispy->fps);
+        MN_DrTextA(str, right_widget_x, 1*height);
     }
 }
 

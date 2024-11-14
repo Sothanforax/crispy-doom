@@ -20,7 +20,9 @@
 #include "deh_str.h"
 #include "i_swap.h"
 #include "i_system.h"
+#include "r_bmaps.h"
 #include "r_local.h"
+#include "v_trans.h" // [crispy] blending functions
 
 typedef struct
 {
@@ -43,10 +45,6 @@ This is not the same as the angle, which increases counter clockwise
 fixed_t pspritescale, pspriteiscale;
 
 lighttable_t **spritelights;
-
-// [AM] Fractional part of the current tic, in the half-open
-//      range of [0.0, 1.0).  Used for interpolation.
-extern fixed_t          fractionaltic;
 
 // constant arrays used for psprite clipping and initializing clipping
 int negonearray[MAXWIDTH];       // [crispy] 32-bit integer math
@@ -342,12 +340,12 @@ vissprite_t *R_NewVisSprite(void)
 int *mfloorclip;   // [crispy] 32-bit integer math
 int *mceilingclip; // [crispy] 32-bit integer math
 fixed_t spryscale;
-fixed_t sprtopscreen;
+int64_t sprtopscreen; // [crispy] WiggleFix
 fixed_t sprbotscreen;
 
 void R_DrawMaskedColumn(column_t * column, signed int baseclip)
 {
-    int topscreen, bottomscreen;
+    int64_t topscreen, bottomscreen; // [crispy] WiggleFix
     fixed_t basetexturemid;
 
     basetexturemid = dc_texturemid;
@@ -358,8 +356,8 @@ void R_DrawMaskedColumn(column_t * column, signed int baseclip)
 // calculate unclipped screen coordinates for post
         topscreen = sprtopscreen + spryscale * column->topdelta;
         bottomscreen = topscreen + spryscale * column->length;
-        dc_yl = (topscreen + FRACUNIT - 1) >> FRACBITS;
-        dc_yh = (bottomscreen - 1) >> FRACBITS;
+        dc_yl = (int)((topscreen + FRACUNIT - 1) >> FRACBITS); // [crispy] WiggleFix
+        dc_yh = (int)((bottomscreen - 1) >> FRACBITS); // [crispy] WiggleFix
 
         if (dc_yh >= mfloorclip[dc_x])
             dc_yh = mfloorclip[dc_x] - 1;
@@ -403,7 +401,10 @@ void R_DrawVisSprite(vissprite_t * vis, int x1, int x2)
 
     patch = W_CacheLumpNum(vis->patch + firstspritelump, PU_CACHE);
 
-    dc_colormap = vis->colormap;
+    // [crispy] brightmaps for select sprites
+    dc_colormap[0] = vis->colormap[0];
+    dc_colormap[1] = vis->colormap[1];
+    dc_brightmap = vis->brightmap;
 
 //      if(!dc_colormap)
 //              colfunc = tlcolfunc;  // NULL colormap = shadow draw
@@ -420,6 +421,9 @@ void R_DrawVisSprite(vissprite_t * vis, int x1, int x2)
         {                       // Draw using shadow column function
             colfunc = tlcolfunc;
         }
+#ifdef CRISPY_TRUECOLOR
+        blendfunc = vis->blendfunc;
+#endif
     }
     else if (vis->mobjflags & MF_TRANSLATION)
     {
@@ -469,6 +473,9 @@ void R_DrawVisSprite(vissprite_t * vis, int x1, int x2)
     }
 
     colfunc = basecolfunc;
+#ifdef CRISPY_TRUECOLOR
+    blendfunc = I_BlendOverTinttab;
+#endif
 }
 
 
@@ -519,10 +526,10 @@ void R_ProjectSprite(mobj_t * thing)
         // Don't interpolate during a paused state.
         leveltime > oldleveltime)
     {
-        interpx = thing->oldx + FixedMul(thing->x - thing->oldx, fractionaltic);
-        interpy = thing->oldy + FixedMul(thing->y - thing->oldy, fractionaltic);
-        interpz = thing->oldz + FixedMul(thing->z - thing->oldz, fractionaltic);
-        interpangle = R_InterpolateAngle(thing->oldangle, thing->angle, fractionaltic);
+        interpx = LerpFixed(thing->oldx, thing->x);
+        interpy = LerpFixed(thing->oldy, thing->y);
+        interpz = LerpFixed(thing->oldz, thing->z);
+        interpangle = LerpAngle(thing->oldangle, thing->angle);
     }
 
     else
@@ -642,16 +649,29 @@ void R_ProjectSprite(mobj_t * thing)
 //      else ...
 
     if (fixedcolormap)
-        vis->colormap = fixedcolormap;  // fixed map
+        vis->colormap[0] = vis->colormap[1] = fixedcolormap;  // fixed map
     else if (thing->frame & FF_FULLBRIGHT)
-        vis->colormap = colormaps;      // full bright
+        vis->colormap[0] = vis->colormap[1] = colormaps;      // full bright
     else
     {                           // diminished light
         index = xscale >> (LIGHTSCALESHIFT - detailshift + crispy->hires);
         if (index >= MAXLIGHTSCALE)
             index = MAXLIGHTSCALE - 1;
-        vis->colormap = spritelights[index];
+        // [crispy] brightmaps for select sprites
+        vis->colormap[0] = spritelights[index];
+        vis->colormap[1] = colormaps;
     }
+
+    vis->brightmap = R_BrightmapForSprite(thing->state - states);
+
+#ifdef CRISPY_TRUECOLOR
+    if (thing->flags & MF_SHADOW)
+    {
+        // [crispy] not using additive blending (I_BlendAdd) here 
+        // to preserve look & feel of original Heretic's translucency
+        vis->blendfunc = I_BlendOverTinttab;
+    }
+#endif
 }
 
 
@@ -675,7 +695,7 @@ void R_AddSprites(sector_t * sec)
 
     sec->validcount = validcount;
 
-    lightnum = (sec->lightlevel >> LIGHTSEGSHIFT) + extralight;
+    lightnum = (sec->lightlevel >> LIGHTSEGSHIFT) + (extralight * LIGHTBRIGHT); // [crispy] smooth diminishing lighting
     if (lightnum < 0)
         spritelights = scalelight[0];
     else if (lightnum >= LIGHTLEVELS)
@@ -708,6 +728,8 @@ int PSpriteSY[NUMWEAPONS] = {
     15 * FRACUNIT,              // gauntlets
     15 * FRACUNIT               // beak
 };
+
+boolean pspr_interp = true; // [crispy]
 
 void R_DrawPSprite(pspdef_t * psp)
 {
@@ -743,7 +765,7 @@ void R_DrawPSprite(pspdef_t * psp)
 //
 // calculate edges of the shape
 //
-    tx = psp->sx - 160 * FRACUNIT;
+    tx = psp->sx2 - 160 * FRACUNIT;
 
     tx -= spriteoffset[lump];
     if (viewangleoffset)
@@ -771,8 +793,9 @@ void R_DrawPSprite(pspdef_t * psp)
     vis->mobjflags = 0;
     vis->psprite = true;
     vis->footclip = 0;
+    // [crispy] weapons drawn 1 pixel too high when player is idle
     vis->texturemid =
-        (BASEYCENTER << FRACBITS) /* + FRACUNIT / 2 */ - (psp->sy -
+        (BASEYCENTER << FRACBITS) + FRACUNIT / 4 - (psp->sy2 -
                                                     spritetopoffset[lump]);
     if (viewheight == SCREENHEIGHT)
     {
@@ -799,24 +822,67 @@ void R_DrawPSprite(pspdef_t * psp)
         viewplayer->powers[pw_invisibility] & 8)
     {
         // Invisibility
-        vis->colormap = spritelights[MAXLIGHTSCALE - 1];
+        // [crispy] allow translucent weapons to be affected by invulnerability colormap
+        vis->colormap[0] = vis->colormap[1] = fixedcolormap ? fixedcolormap :
+                                              spritelights[MAXLIGHTSCALE - 1];
         vis->mobjflags |= MF_SHADOW;
+#ifdef CRISPY_TRUECOLOR
+        vis->blendfunc = I_BlendOverTinttab;
+#endif
     }
     else if (fixedcolormap)
     {
         // Fixed color
-        vis->colormap = fixedcolormap;
+        vis->colormap[0] = vis->colormap[1] = fixedcolormap;
     }
     else if (psp->state->frame & FF_FULLBRIGHT)
     {
         // Full bright
-        vis->colormap = colormaps;
+        vis->colormap[0] = vis->colormap[1] = colormaps;
     }
     else
     {
         // local light
-        vis->colormap = spritelights[MAXLIGHTSCALE - 1];
+        vis->colormap[0] = spritelights[MAXLIGHTSCALE - 1];
+        vis->colormap[1] = colormaps;
     }
+    vis->brightmap = R_BrightmapForState(psp->state - states);
+
+    // [crispy] interpolate weapon bobbing
+    if (crispy->uncapped)
+    {
+        static int     oldx1, x1_saved;
+        static fixed_t oldtexturemid, texturemid_saved;
+        static int     oldlump = -1;
+        static int     oldgametic = -1;
+
+        if (oldgametic < gametic)
+        {
+            oldx1 = x1_saved;
+            oldtexturemid = texturemid_saved;
+            oldgametic = gametic;
+        }
+
+        x1_saved = vis->x1;
+        texturemid_saved = vis->texturemid;
+
+        if (lump == oldlump && pspr_interp)
+        {
+            int deltax = vis->x2 - vis->x1;
+            vis->x1 = LerpFixed(oldx1, vis->x1);
+            vis->x2 = vis->x1 + deltax;
+            vis->x2 = vis->x2 >= viewwidth ? viewwidth - 1 : vis->x2;
+            vis->texturemid = LerpFixed(oldtexturemid, vis->texturemid);
+        }
+        else
+        {
+            oldx1 = vis->x1;
+            oldtexturemid = vis->texturemid;
+            oldlump = lump;
+            pspr_interp = true;
+        }
+    }
+
     R_DrawVisSprite(vis, vis->x1, vis->x2);
 }
 
@@ -838,7 +904,7 @@ void R_DrawPlayerSprites(void)
 //
     lightnum =
         (viewplayer->mo->subsector->sector->lightlevel >> LIGHTSEGSHIFT) +
-        extralight;
+        (extralight * LIGHTBRIGHT); // [crispy] smooth diminishing lighting
     if (lightnum < 0)
         spritelights = scalelight[0];
     else if (lightnum >= LIGHTLEVELS)
@@ -875,7 +941,7 @@ void R_SortVisSprites(void)
 {
     int i, count;
     vissprite_t *ds, *best;
-    vissprite_t unsorted;
+    static vissprite_t unsorted;
     fixed_t bestscale;
 
     count = vissprite_p - vissprites;

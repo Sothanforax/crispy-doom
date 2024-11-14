@@ -65,7 +65,7 @@ degenmobj_t *laserspot = &laserspot_m;
 
 // [crispy] extendable, but the last char element must be zero,
 // keep in sync with multiitem_t multiitem_crosshairtype[] in m_menu.c
-static laserpatch_t laserpatch_m[] = {
+static laserpatch_t laserpatch_m[NUM_CROSSHAIRTYPES + 1] = {
 	{'+', "cross1", 0, 0, 0},
 	{'^', "cross2", 0, 0, 0},
 	{'.', "cross3", 0, 0, 0},
@@ -544,7 +544,7 @@ R_DrawVisSprite
 
     colfunc = basecolfunc;
 #ifdef CRISPY_TRUECOLOR
-    blendfunc = I_BlendOver;
+    blendfunc = I_BlendOverTranmap;
 #endif
 }
 
@@ -600,10 +600,10 @@ void R_ProjectSprite (mobj_t* thing)
         // Don't interpolate during a paused state.
         leveltime > oldleveltime)
     {
-        interpx = thing->oldx + FixedMul(thing->x - thing->oldx, fractionaltic);
-        interpy = thing->oldy + FixedMul(thing->y - thing->oldy, fractionaltic);
-        interpz = thing->oldz + FixedMul(thing->z - thing->oldz, fractionaltic);
-        interpangle = R_InterpolateAngle(thing->oldangle, thing->angle, fractionaltic);
+        interpx = LerpFixed(thing->oldx, thing->x);
+        interpy = LerpFixed(thing->oldy, thing->y);
+        interpz = LerpFixed(thing->oldz, thing->z);
+        interpangle = LerpAngle(thing->oldangle, thing->angle);
     }
     else
     {
@@ -780,7 +780,7 @@ void R_ProjectSprite (mobj_t* thing)
 
 	// [crispy] brightmaps for select sprites
 	vis->colormap[0] = spritelights[index];
-	vis->colormap[1] = scalelight[LIGHTLEVELS-1][MAXLIGHTSCALE-1];
+	vis->colormap[1] = colormaps;
     }	
     vis->brightmap = R_BrightmapForSprite(thing->sprite);
 
@@ -817,7 +817,7 @@ void R_ProjectSprite (mobj_t* thing)
     // [crispy] translucent sprites
     if (thing->flags & MF_TRANSLUCENT)
     {
-	vis->blendfunc = (thing->frame & FF_FULLBRIGHT) ? I_BlendAdd : I_BlendOver;
+	vis->blendfunc = (thing->frame & FF_FULLBRIGHT) ? I_BlendAdd : I_BlendOverTranmap;
     }
 #endif
 }
@@ -969,6 +969,9 @@ void R_AddSprites (sector_t* sec)
 //
 // R_DrawPSprite
 //
+
+boolean pspr_interp = true; // interpolate weapon bobbing
+
 void R_DrawPSprite (pspdef_t* psp, psprnum_t psprnum) // [crispy] differentiate gun from flash sprites
 {
     fixed_t		tx;
@@ -1026,7 +1029,7 @@ void R_DrawPSprite (pspdef_t* psp, psprnum_t psprnum) // [crispy] differentiate 
     vis->translation = NULL; // [crispy] no color translation
     vis->mobjflags = 0;
     // [crispy] weapons drawn 1 pixel too high when player is idle
-    vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/4-(psp->sy2-spritetopoffset[lump]);
+    vis->texturemid = (BASEYCENTER<<FRACBITS)+FRACUNIT/(2<<crispy->hires)-(psp->sy2-spritetopoffset[lump]);
     vis->x1 = x1 < 0 ? 0 : x1;
     vis->x2 = x2 >= viewwidth ? viewwidth-1 : x2;	
     vis->scale = pspritescale<<detailshift;
@@ -1042,9 +1045,6 @@ void R_DrawPSprite (pspdef_t* psp, psprnum_t psprnum) // [crispy] differentiate 
 	vis->startfrac = 0;
     }
     
-    // [crispy] free look
-    vis->texturemid += FixedMul(((centery - viewheight / 2) << FRACBITS), pspriteiscale) >> detailshift;
-
     if (vis->x1 > x1)
 	vis->startfrac += vis->xiscale*(vis->x1-x1);
 
@@ -1070,7 +1070,7 @@ void R_DrawPSprite (pspdef_t* psp, psprnum_t psprnum) // [crispy] differentiate 
     {
 	// local light
 	vis->colormap[0] = spritelights[MAXLIGHTSCALE-1];
-	vis->colormap[1] = scalelight[LIGHTLEVELS-1][MAXLIGHTSCALE-1];
+	vis->colormap[1] = colormaps;
     }
     vis->brightmap = R_BrightmapForState(psp->state - states);
 	
@@ -1079,9 +1079,47 @@ void R_DrawPSprite (pspdef_t* psp, psprnum_t psprnum) // [crispy] differentiate 
     {
         vis->mobjflags |= MF_TRANSLUCENT;
 #ifdef CRISPY_TRUECOLOR
-        vis->blendfunc = I_BlendOver; // I_BlendAdd;
+        vis->blendfunc = I_BlendOverTranmap; // I_BlendAdd;
 #endif
     }
+
+    // interpolate weapon bobbing
+    if (crispy->uncapped)
+    {
+        static int     oldx1, x1_saved;
+        static fixed_t oldtexturemid, texturemid_saved;
+        static int     oldlump = -1;
+        static int     oldgametic = -1;
+
+        if (oldgametic < gametic)
+        {
+            oldx1 = x1_saved;
+            oldtexturemid = texturemid_saved;
+            oldgametic = gametic;
+        }
+
+        x1_saved = vis->x1;
+        texturemid_saved = vis->texturemid;
+
+        if (lump == oldlump && pspr_interp)
+        {
+            int deltax = vis->x2 - vis->x1;
+            vis->x1 = LerpFixed(oldx1, vis->x1);
+            vis->x2 = vis->x1 + deltax;
+            vis->x2 = vis->x2 >= viewwidth ? viewwidth - 1 : vis->x2;
+            vis->texturemid = LerpFixed(oldtexturemid, vis->texturemid);
+        }
+        else
+        {
+            oldx1 = vis->x1;
+            oldtexturemid = vis->texturemid;
+            oldlump = lump;
+            pspr_interp = true;
+        }
+    }
+
+    // [crispy] free look
+    vis->texturemid += FixedMul(((centery - viewheight / 2) << FRACBITS), pspriteiscale) >> detailshift;
 
     R_DrawVisSprite (vis, vis->x1, vis->x2);
 }
@@ -1174,7 +1212,7 @@ void R_SortVisSprites (void)
     int			count;
     vissprite_t*	ds;
     vissprite_t*	best;
-    vissprite_t		unsorted;
+    static vissprite_t	unsorted;
     fixed_t		bestscale;
 
     count = vissprite_p - vissprites;

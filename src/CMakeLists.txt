@@ -33,7 +33,10 @@ set(DEDSERV_FILES
 add_executable("${PROGRAM_PREFIX}server" WIN32 ${COMMON_SOURCE_FILES} ${DEDSERV_FILES})
 target_include_directories("${PROGRAM_PREFIX}server"
                            PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../")
-target_link_libraries("${PROGRAM_PREFIX}server" SDL2::SDL2main SDL2::net)
+target_link_libraries("${PROGRAM_PREFIX}server" SDL2::SDL2main SDL2::SDL2)
+if(ENABLE_SDL2_NET)
+    target_link_libraries("${PROGRAM_PREFIX}server" SDL2_net::SDL2_net)
+endif()
 
 # Source files used by the game binaries (chocolate-doom, etc.)
 
@@ -51,6 +54,7 @@ set(GAME_SOURCE_FILES
     gusconf.c           gusconf.h
     i_cdmus.c           i_cdmus.h
     i_endoom.c          i_endoom.h
+    i_flmusic.c
     i_glob.c            i_glob.h
     i_input.c           i_input.h
     i_joystick.c        i_joystick.h
@@ -62,9 +66,11 @@ set(GAME_SOURCE_FILES
     i_sdlsound.c
     i_sound.c           i_sound.h
     i_timer.c           i_timer.h
+    i_truecolor.c       i_truecolor.h
     i_video.c           i_video.h
     i_videohr.c         i_videohr.h
-    i_winmusic.c        i_winmusic.h
+    i_winmusic.c
+    midifallback.c      midifallback.h
     midifile.c          midifile.h
     mus2mid.c           mus2mid.h
     m_bbox.c            m_bbox.h
@@ -104,7 +110,7 @@ set(GAME_SOURCE_FILES
 
 set(GAME_INCLUDE_DIRS "${CMAKE_CURRENT_BINARY_DIR}/../")
 
-if(MSVC)
+if(WIN32)
     list(APPEND GAME_SOURCE_FILES
          "../win32/win_opendir.c" "../win32/win_opendir.h")
 
@@ -124,19 +130,28 @@ set(DEHACKED_SOURCE_FILES
 set(SOURCE_FILES ${COMMON_SOURCE_FILES} ${GAME_SOURCE_FILES})
 set(SOURCE_FILES_WITH_DEH ${SOURCE_FILES} ${DEHACKED_SOURCE_FILES})
 
-set(EXTRA_LIBS SDL2::SDL2main SDL2::SDL2 SDL2::mixer SDL2::net textscreen pcsound opl)
-if(SAMPLERATE_FOUND)
-    list(APPEND EXTRA_LIBS samplerate::samplerate)
+set(EXTRA_LIBS SDL2::SDL2main SDL2::SDL2 textscreen pcsound opl)
+if(ENABLE_SDL2_MIXER)
+    list(APPEND EXTRA_LIBS SDL2_mixer::SDL2_mixer)
+endif()
+if(ENABLE_SDL2_NET)
+    list(APPEND EXTRA_LIBS SDL2_net::SDL2_net)
+endif()
+if(SampleRate_FOUND)
+    list(APPEND EXTRA_LIBS SampleRate::samplerate)
 endif()
 if(PNG_FOUND)
     list(APPEND EXTRA_LIBS PNG::PNG)
 endif()
+if(FluidSynth_FOUND)
+    list(APPEND EXTRA_LIBS FluidSynth::libfluidsynth)
+endif()
 if(WIN32)
-	list(APPEND EXTRA_LIBS winmm)
+	list(APPEND EXTRA_LIBS winmm shlwapi)
 endif()
 
 if(WIN32)
-    add_executable("${PROGRAM_PREFIX}doom" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/resource.rc")
+    add_executable("${PROGRAM_PREFIX}doom" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/doom-res.rc")
 else()
     add_executable("${PROGRAM_PREFIX}doom" ${SOURCE_FILES_WITH_DEH})
 endif()
@@ -150,7 +165,7 @@ if(MSVC)
 endif()
 
 if(WIN32)
-    add_executable("${PROGRAM_PREFIX}heretic" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/resource.rc")
+    add_executable("${PROGRAM_PREFIX}heretic" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/heretic-res.rc")
 else()
     add_executable("${PROGRAM_PREFIX}heretic" ${SOURCE_FILES_WITH_DEH})
 endif()
@@ -164,7 +179,7 @@ if(MSVC)
 endif()
 
 if(WIN32)
-    add_executable("${PROGRAM_PREFIX}hexen" WIN32 ${SOURCE_FILES} "${CMAKE_CURRENT_BINARY_DIR}/resource.rc")
+    add_executable("${PROGRAM_PREFIX}hexen" WIN32 ${SOURCE_FILES} "${CMAKE_CURRENT_BINARY_DIR}/hexen-res.rc")
 else()
     add_executable("${PROGRAM_PREFIX}hexen" ${SOURCE_FILES})
 endif()
@@ -178,7 +193,7 @@ if(MSVC)
 endif()
 
 if(WIN32)
-    add_executable("${PROGRAM_PREFIX}strife" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/resource.rc")
+    add_executable("${PROGRAM_PREFIX}strife" WIN32 ${SOURCE_FILES_WITH_DEH} "${CMAKE_CURRENT_BINARY_DIR}/strife-res.rc")
 else()
     add_executable("${PROGRAM_PREFIX}strife" ${SOURCE_FILES_WITH_DEH})
 endif()
@@ -216,7 +231,16 @@ endif()
 
 target_include_directories("${PROGRAM_PREFIX}setup"
                            PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../")
-target_link_libraries("${PROGRAM_PREFIX}setup" SDL2::SDL2main SDL2::SDL2 SDL2::mixer SDL2::net setup textscreen)
+target_link_libraries("${PROGRAM_PREFIX}setup" SDL2::SDL2main SDL2::SDL2 setup textscreen)
+if(ENABLE_SDL2_MIXER)
+    target_link_libraries("${PROGRAM_PREFIX}setup" SDL2_mixer::SDL2_mixer)
+endif()
+if(ENABLE_SDL2_NET)
+    target_link_libraries("${PROGRAM_PREFIX}setup" SDL2_net::SDL2_net)
+endif()
+if(WIN32)
+    target_link_libraries("${PROGRAM_PREFIX}setup" winmm)
+endif()
 
 if(MSVC)
     set_target_properties("${PROGRAM_PREFIX}setup" PROPERTIES
@@ -226,9 +250,9 @@ endif()
 add_executable(midiread midifile.c z_native.c i_system.c m_argv.c m_misc.c d_iwad.c deh_str.c m_config.c)
 target_compile_definitions(midiread PRIVATE "-DTEST")
 target_include_directories(midiread PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../")
-target_link_libraries(midiread SDL2::SDL2main SDL2::SDL2)
+target_link_libraries(midiread SDL2::SDL2)
 
 add_executable(mus2mid mus2mid.c memio.c z_native.c i_system.c m_argv.c m_misc.c d_iwad.c deh_str.c m_config.c)
 target_compile_definitions(mus2mid PRIVATE "-DSTANDALONE")
 target_include_directories(mus2mid PRIVATE "${CMAKE_CURRENT_BINARY_DIR}/../")
-target_link_libraries(mus2mid SDL2::SDL2main SDL2::SDL2)
+target_link_libraries(mus2mid SDL2::SDL2)

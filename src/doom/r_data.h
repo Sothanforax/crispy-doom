@@ -40,6 +40,12 @@ R_GetColumnMod
 ( int		tex,
   int		col );
 
+// [crispy] wrapping column getter function for non-power-of-two wide sky textures
+byte*
+R_GetColumnMod2
+( int		tex,
+  int		col );
+
 
 // I/O, setting up the stuff.
 void R_InitData (void);
@@ -56,5 +62,9 @@ int R_FlatNumForName(const char *name);
 // returns the texture number for the texture name.
 int R_TextureNumForName(const char *name);
 int R_CheckTextureNumForName(const char *name);
+
+
+extern int numflats;
+
 
 #endif

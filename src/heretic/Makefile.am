@@ -3,7 +3,9 @@ AM_CFLAGS=-I$(top_srcdir)/src                           \
           -I$(top_srcdir)/textscreen                    \
           @SDL_CFLAGS@ @SDLMIXER_CFLAGS@ @SDLNET_CFLAGS@
 
-EXTRA_DIST = CMakeLists.txt
+EXTRA_DIST =                                         \
+        CMakeLists.txt                               \
+        heretic_icon.c
 
 noinst_LIBRARIES=libheretic.a
 
@@ -30,9 +32,11 @@ in_lude.c                                            \
 m_random.c             m_random.h                    \
 mn_menu.c                                            \
                        p_action.h                    \
+p_blockmap.c                                         \
 p_ceilng.c                                           \
 p_doors.c                                            \
 p_enemy.c                                            \
+p_extnodes.c           p_extnodes.h                  \
 p_floor.c                                            \
 p_inter.c                                            \
 p_lights.c                                           \
@@ -50,6 +54,7 @@ p_switch.c                                           \
 p_telept.c                                           \
 p_tick.c                                             \
 p_user.c                                             \
+r_bmaps.c              r_bmaps.h                     \
 r_bsp.c                                              \
 r_data.c                                             \
 r_draw.c                                             \
@@ -57,8 +62,15 @@ r_draw.c                                             \
 r_main.c                                             \
 r_plane.c                                            \
 r_segs.c                                             \
+r_swirl.c              r_swirl.h                     \
 r_things.c                                           \
 sb_bar.c                                             \
 sounds.c               sounds.h                      \
 s_sound.c              s_sound.h
 
+if HAVE_ICONS
+
+heretic_icon.c : $(top_builddir)/data/heretic.png
+	$(top_builddir)/data/convert-icon $(top_builddir)/data/heretic.png $@
+
+endif

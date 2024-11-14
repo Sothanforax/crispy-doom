@@ -29,6 +29,7 @@ static FILE *SaveGameFP;
 
 int vanilla_savegame_limit = 1;
 
+int savepage; // [crispy]
 
 //==========================================================================
 //
@@ -47,7 +48,8 @@ char *SV_Filename(int slot)
     filename_len = strlen(savegamedir) + strlen(SAVEGAMENAME) + 8;
     filename = malloc(filename_len);
     M_snprintf(filename, filename_len,
-               "%s" SAVEGAMENAME "%d.hsg", savegamedir, slot);
+               "%s" SAVEGAMENAME "%d.hsg", savegamedir,
+               SAVES_PER_PAGE * savepage + slot);
 
     return filename;
 }
@@ -60,12 +62,12 @@ char *SV_Filename(int slot)
 
 void SV_Open(char *fileName)
 {
-    SaveGameFP = fopen(fileName, "wb");
+    SaveGameFP = M_fopen(fileName, "wb");
 }
 
 void SV_OpenRead(char *filename)
 {
-    SaveGameFP = fopen(filename, "rb");
+    SaveGameFP = M_fopen(filename, "rb");
 
     if (SaveGameFP == NULL)
     {
@@ -326,6 +328,10 @@ static void saveg_read_pspdef_t(pspdef_t *str)
     // fixed_t sx, sy;
     str->sx = SV_ReadLong();
     str->sy = SV_ReadLong();
+
+    // [crispy] variable weapon sprite bob
+    str->sx2 = str->sx;
+    str->sy2 = str->sy;
 }
 
 static void saveg_write_pspdef_t(pspdef_t *str)
@@ -372,6 +378,9 @@ static void saveg_read_player_t(player_t *str)
     // fixed_t bob;
     str->bob = SV_ReadLong();
 
+    // [crispy] variable player view bob
+    str->bob2 = str->bob;
+
     // int flyheight;
     str->flyheight = SV_ReadLong();
 
@@ -409,8 +418,8 @@ static void saveg_read_player_t(player_t *str)
         str->powers[i] = SV_ReadLong();
     }
 
-    // boolean keys[NUMKEYS];
-    for (i=0; i<NUMKEYS; ++i)
+    // boolean keys[NUM_KEY_TYPES];
+    for (i = 0; i < NUM_KEY_TYPES; ++i)
     {
         str->keys[i] = SV_ReadLong();
     }
@@ -579,7 +588,7 @@ static void saveg_write_player_t(player_t *str)
     }
 
     // boolean keys[NUMKEYS];
-    for (i=0; i<NUMKEYS; ++i)
+    for (i = 0; i < NUM_KEY_TYPES; ++i)
     {
         SV_WriteLong(str->keys[i]);
     }
@@ -1619,7 +1628,7 @@ void P_ArchiveWorld(void)
         SV_WriteWord(li->tag);
         for (j = 0; j < 2; j++)
         {
-            if (li->sidenum[j] == -1)
+            if (li->sidenum[j] == NO_INDEX) // [crispy] extended nodes
             {
                 continue;
             }
@@ -1674,7 +1683,7 @@ void P_UnArchiveWorld(void)
         li->tag = SV_ReadWord();
         for (j = 0; j < 2; j++)
         {
-            if (li->sidenum[j] == -1)
+            if (li->sidenum[j] == NO_INDEX) // [crispy] extended nodes
                 continue;
             si = &sides[li->sidenum[j]];
             si->textureoffset = SV_ReadWord() << FRACBITS;

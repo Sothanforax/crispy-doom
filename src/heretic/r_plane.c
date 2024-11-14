@@ -19,7 +19,9 @@
 #include "doomdef.h"
 #include "deh_str.h"
 #include "i_system.h"
+#include "r_bmaps.h" // [crispy] R_BrightmapForTexName()
 #include "r_local.h"
+#include "r_swirl.h" // [crispy] R_DistortedFlat()
 
 planefunction_t floorfunc, ceilingfunc;
 
@@ -62,7 +64,8 @@ int spanstop[MAXHEIGHT];
 lighttable_t **planezlight;
 fixed_t planeheight;
 
-fixed_t yslope[MAXHEIGHT];
+fixed_t *yslope;
+fixed_t yslopes[LOOKDIRS][MAXHEIGHT]; // [crispy]
 fixed_t distscale[MAXWIDTH];
 fixed_t basexscale, baseyscale;
 
@@ -71,6 +74,8 @@ fixed_t cacheddistance[MAXHEIGHT];
 fixed_t cachedxstep[MAXHEIGHT];
 fixed_t cachedystep[MAXHEIGHT];
 
+static fixed_t xsmoothscrolloffset; // [crispy]
+static fixed_t ysmoothscrolloffset; // [crispy]
 
 /*
 ================
@@ -135,19 +140,25 @@ void R_MapPlane(int y, int x1, int x2)
 
 // [crispy] visplanes with the same flats now match up far better than before
 // adapted from prboom-plus/src/r_plane.c:191-239, translated to fixed-point math
+//
+// SoM: because centery is an actual row of pixels (and it isn't really the
+// center row because there are an even number of rows) some corrections need
+// to be made depending on where the row lies relative to the centery row.
 
-    if (!(dy = abs(centery - y)))
+    if (centery == y)
     {
 	return;
     }
+
+    dy = (abs(centery - y) << FRACBITS) + (y < centery ? -FRACUNIT : FRACUNIT) / 2;
 
     if (planeheight != cachedheight[y])
     {
         cachedheight[y] = planeheight;
         distance = cacheddistance[y] = FixedMul(planeheight, yslope[y]);
 
-        ds_xstep = cachedxstep[y] = (FixedMul(viewsin, planeheight) / dy) << detailshift;
-        ds_ystep = cachedystep[y] = (FixedMul(viewcos, planeheight) / dy) << detailshift;
+        ds_xstep = cachedxstep[y] = FixedDiv(FixedMul(viewsin, planeheight), dy) << detailshift;
+        ds_ystep = cachedystep[y] = FixedDiv(FixedMul(viewcos, planeheight), dy) << detailshift;
     }
     else
     {
@@ -160,14 +171,19 @@ void R_MapPlane(int y, int x1, int x2)
     ds_xfrac = viewx + FixedMul(viewcos, distance) + dx * ds_xstep;
     ds_yfrac = -viewy - FixedMul(viewsin, distance) + dx * ds_ystep;
 
+     // [crispy] add smooth scroll offsets
+    ds_xfrac += xsmoothscrolloffset;
+    ds_yfrac += ysmoothscrolloffset;
+
     if (fixedcolormap)
-        ds_colormap = fixedcolormap;
+        ds_colormap[0] = ds_colormap[1] = fixedcolormap;
     else
     {
         index = distance >> LIGHTZSHIFT;
         if (index >= MAXLIGHTZ)
             index = MAXLIGHTZ - 1;
-        ds_colormap = planezlight[index];
+        ds_colormap[0] = planezlight[index];
+        ds_colormap[1] = colormaps;
     }
 
     ds_y = y;
@@ -255,7 +271,8 @@ visplane_t *R_FindPlane(fixed_t height, int picnum,
 {
     visplane_t *check;
 
-    if (picnum == skyflatnum)
+    // [crispy] add support for MBF sky transfers
+    if (picnum == skyflatnum || picnum & PL_SKYFLAT)
     {
         // all skies map together
         height = 0;
@@ -399,9 +416,12 @@ void R_MakeSpans(int x, unsigned int t1, unsigned int b1, unsigned int t2, unsig
 */
 
 #define SKYTEXTUREMIDSHIFTED 200 // [crispy]
+#define FLATSCROLL(X) \
+    ((interpfactor << (X)) - (((63 - ((leveltime >> 1) & 63)) << (X) & 63) * FRACUNIT))
 
 void R_DrawPlanes(void)
 {
+    boolean swirling;
     visplane_t *pl;
     int light;
     int x, stop;
@@ -409,13 +429,11 @@ void R_DrawPlanes(void)
     int angle;
     byte *tempSource;
 
-    byte *dest;
+    pixel_t *dest;
     int count;
     fixed_t frac, fracstep;
     int heightmask; // [crispy]
-
-    extern byte *ylookup[MAXHEIGHT];
-    extern int columnofs[MAXWIDTH];
+    static int interpfactor; // [crispy]
 
 #ifdef RANGECHECK
     if (ds_p - drawsegs > numdrawsegs)
@@ -435,22 +453,40 @@ void R_DrawPlanes(void)
             continue;
         //
         // sky flat
-        //
-        if (pl->picnum == skyflatnum)
+        // [crispy] add support for MBF sky transfers
+        if (pl->picnum == skyflatnum || pl->picnum & PL_SKYFLAT)
         {
+            int texture;
+	    angle_t an = viewangle, flip;
+	    if (pl->picnum & PL_SKYFLAT)
+	    {
+		const line_t *l = &lines[pl->picnum & ~PL_SKYFLAT];
+		const side_t *s = *l->sidenum + sides;
+		texture = texturetranslation[s->toptexture];
+		dc_texturemid = s->rowoffset - 28*FRACUNIT;
+		flip = (l->special == 272) ? 0u : ~0u;
+		an += s->textureoffset;
+	    }
+	    else
+	    {
+		texture = skytexture;
+		dc_texturemid = skytexturemid;
+		flip = 0;
+	    }
             dc_iscale = skyiscale;
-            dc_colormap = colormaps;    // sky is allways drawn full bright
-            dc_texturemid = skytexturemid;
-            dc_texheight = textureheight[skytexture]>>FRACBITS;
+            // [crispy] no brightmaps for sky
+            dc_colormap[0] = dc_colormap[1] = colormaps;    // sky is allways drawn full bright
+            dc_texheight = textureheight[texture]>>FRACBITS;
+
             for (x = pl->minx; x <= pl->maxx; x++)
             {
                 dc_yl = pl->top[x];
                 dc_yh = pl->bottom[x];
                 if ((unsigned) dc_yl <= dc_yh) // [crispy] 32-bit integer math
                 {
-                    angle = (viewangle + xtoviewangle[x]) >> ANGLETOSKYSHIFT;
+                    angle = ((an + xtoviewangle[x]) ^ flip) >> ANGLETOSKYSHIFT;
                     dc_x = x;
-                    dc_source = R_GetColumn(skytexture, angle);
+                    dc_source = R_GetColumn(texture, angle);
 
                     count = dc_yh - dc_yl;
                     if (count < 0)
@@ -481,7 +517,11 @@ void R_DrawPlanes(void)
                                 frac -= heightmask;
                         do
                         {
+#ifndef CRISPY_TRUECOLOR
                             *dest = dc_source[frac >> FRACBITS];
+#else
+                            *dest = pal_color[dc_source[frac >> FRACBITS]];
+#endif
                             dest += SCREENWIDTH;
 
                             if ((frac += fracstep) >= heightmask)
@@ -497,7 +537,11 @@ void R_DrawPlanes(void)
                     {
                         do
                         {
+#ifndef CRISPY_TRUECOLOR
                             *dest = dc_source[(frac >> FRACBITS) & heightmask];
+#else
+                            *dest = pal_color[dc_source[(frac >> FRACBITS) & heightmask]];
+#endif
                             dest += SCREENWIDTH;
                             frac += fracstep;
                         } while (count--);
@@ -510,10 +554,34 @@ void R_DrawPlanes(void)
         //
         // regular flat
         //
+        swirling = flattranslation[pl->picnum] == -1;
+        if (!swirling) // [crispy] adapt swirl from src/doom to src/heretic
+        {
         lumpnum = firstflat + flattranslation[pl->picnum];
 
         tempSource = W_CacheLumpNum(lumpnum, PU_STATIC);
 
+        // [crispy] Use old value of interpfactor if uncapped and paused. This
+        // ensures that scrolling stops smoothly when pausing.
+        if (crispy->uncapped && leveltime > oldleveltime)
+        {
+            // [crispy] Scrolling normally advances every *other* gametic, so
+            // interpolation needs to span two tics
+            if (leveltime & 1)
+            {
+                interpfactor = (FRACUNIT + fractionaltic) >> 1;
+            }
+            else
+            {
+                interpfactor = fractionaltic >> 1;
+            }
+        }
+        else if (!crispy->uncapped)
+        {
+            interpfactor = 0;
+        }
+
+        //[crispy] use smoothscrolloffsets to unconditonally animate all scrolling floors
         switch (pl->special)
         {
             case 25:
@@ -521,6 +589,8 @@ void R_DrawPlanes(void)
             case 27:
             case 28:
             case 29:           // Scroll_North
+                xsmoothscrolloffset = 0;
+                ysmoothscrolloffset = FLATSCROLL(pl->special - 25);
                 ds_source = tempSource;
                 break;
             case 20:
@@ -528,8 +598,13 @@ void R_DrawPlanes(void)
             case 22:
             case 23:
             case 24:           // Scroll_East
-                ds_source = tempSource + ((63 - ((leveltime >> 1) & 63)) <<
-                                          (pl->special - 20) & 63);
+                // [crispy] vanilla Heretic animates Eastward scrollers by adding to tempSource.
+                // this directly offsets the position the flat is read from, and results in
+                // visual artifacts (tutti-frutti on flats that aren't at least 65px tall, jittery
+                // animation, unwanted visplane merging of adjacent flats with different scrollers)
+                xsmoothscrolloffset = -FLATSCROLL(pl->special - 20);
+                ysmoothscrolloffset = 0;
+                ds_source = tempSource;
                 //ds_source = tempSource+((leveltime>>1)&63);
                 break;
             case 30:
@@ -537,6 +612,8 @@ void R_DrawPlanes(void)
             case 32:
             case 33:
             case 34:           // Scroll_South
+                xsmoothscrolloffset = 0;
+                ysmoothscrolloffset = -FLATSCROLL(pl->special - 30);
                 ds_source = tempSource;
                 break;
             case 35:
@@ -544,17 +621,30 @@ void R_DrawPlanes(void)
             case 37:
             case 38:
             case 39:           // Scroll_West
+                xsmoothscrolloffset = FLATSCROLL(pl->special - 35);
+                ysmoothscrolloffset = 0;
                 ds_source = tempSource;
                 break;
             case 4:            // Scroll_EastLavaDamage
-                ds_source =
-                    tempSource + (((63 - ((leveltime >> 1) & 63)) << 3) & 63);
+                // [crispy] calculation moved from tempSource, see Scroll_East above
+                xsmoothscrolloffset = -FLATSCROLL(3);
+                ysmoothscrolloffset = 0;
+                ds_source = tempSource;
                 break;
             default:
+                xsmoothscrolloffset = 0;
+                ysmoothscrolloffset = 0;
                 ds_source = tempSource;
         }
+        }
+        else 
+        {
+            lumpnum = firstflat+pl->picnum;
+            ds_source = R_DistortedFlat(lumpnum);
+        }
+        ds_brightmap = R_BrightmapForFlatNum(lumpnum-firstflat);
         planeheight = abs(pl->height - viewz);
-        light = (pl->lightlevel >> LIGHTSEGSHIFT) + extralight;
+        light = (pl->lightlevel >> LIGHTSEGSHIFT) + (extralight * LIGHTBRIGHT); // [crispy] smooth diminishing lighting
         if (light >= LIGHTLEVELS)
             light = LIGHTLEVELS - 1;
         if (light < 0)
@@ -569,6 +659,7 @@ void R_DrawPlanes(void)
             R_MakeSpans(x, pl->top[x - 1], pl->bottom[x - 1], pl->top[x],
                         pl->bottom[x]);
 
+        if (!swirling)
         W_ReleaseLumpNum(lumpnum);
     }
 }

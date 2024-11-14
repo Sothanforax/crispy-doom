@@ -1,5 +1,8 @@
 //
-// Copyright(C) 2021 Roman Fomin
+// Copyright(C) 1993-1996 Id Software, Inc.
+// Copyright(C) 2005-2014 Simon Howard
+// Copyright(C) 2013-2017 Brad Harding
+// Copyright(C) 2017-2022 Fabian Greffrath
 //
 // This program is free software; you can redistribute it and/or
 // modify it under the terms of the GNU General Public License
@@ -12,25 +15,18 @@
 // GNU General Public License for more details.
 //
 // DESCRIPTION:
-//      Windows native MIDI
+//	Brightmaps for walls, floors, sprites and weapon states
+//
 
-#ifdef _WIN32
+#ifndef __R_BMAPS__
+#define __R_BMAPS__
 
-#ifndef __I_WINMUSIC__
-#define __I_WINMUSIC__
+extern void R_InitBrightmaps ();
 
-#include "doomtype.h"
+extern const byte *R_BrightmapForTexName (const char *texname);
+extern const byte *R_BrightmapForSprite (const int state);
+extern const byte *R_BrightmapForState (const int state);
 
-boolean I_WIN_InitMusic(void);
-void I_WIN_PlaySong(boolean looping);
-void I_WIN_PauseSong(void);
-void I_WIN_ResumeSong(void);
-void I_WIN_StopSong(void);
-void I_WIN_SetMusicVolume(int volume);
-boolean I_WIN_RegisterSong(char* filename);
-void I_WIN_UnRegisterSong(void);
-void I_WIN_ShutdownMusic(void);
-
-#endif
+extern const byte **texturebrightmap;
 
 #endif

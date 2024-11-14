@@ -167,6 +167,13 @@ extern int mousebprevweapon;
 extern int mousebnextweapon;
 extern int mousebinvleft;
 extern int mousebinvright;
+extern int mousebuseartifact;
+extern int mousebinvuse; // [crispy]
+
+extern int mousebmapzoomin; // [crispy]
+extern int mousebmapzoomout; // [crispy]
+extern int mousebmapmaxzoom; // [crispy]
+extern int mousebmapfollow; // [crispy]
 
 extern int joybfire;
 extern int joybstrafe;
@@ -183,6 +190,14 @@ extern int joybnextweapon;
 
 extern int joybmenu;
 extern int joybautomap;
+
+extern int joybuseartifact;
+extern int joybinvleft;
+extern int joybinvright;
+
+extern int joybflyup;
+extern int joybflydown;
+extern int joybflycenter;
 
 extern int dclick_use;
 

@@ -45,7 +45,6 @@ static void PlayerLandedOnThing(mobj_t * mo, mobj_t * onmobj);
 
 // EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
-extern mobj_t LavaInflictor;
 
 // PUBLIC DATA DEFINITIONS -------------------------------------------------
 
@@ -103,7 +102,7 @@ boolean P_SetMobjState(mobj_t * mobj, statenum_t state)
     mobj->frame = st->frame;
     if (st->action)
     {                           // Call action function
-        st->action(mobj);
+        st->action(mobj, NULL, NULL);
     }
     return (true);
 }
@@ -923,8 +922,9 @@ void P_ZMovement(mobj_t * mo)
 //
 //----------------------------------------------------------------------------
 
-void P_BlasterMobjThinker(mobj_t * mobj)
+void P_BlasterMobjThinker(thinker_t *thinker)
 {
+    mobj_t *mobj = (mobj_t *) thinker;
     int i;
     fixed_t xfrac;
     fixed_t yfrac;
@@ -1052,9 +1052,31 @@ static void PlayerLandedOnThing(mobj_t * mo, mobj_t * onmobj)
 //
 //----------------------------------------------------------------------------
 
-void P_MobjThinker(mobj_t * mobj)
+void P_MobjThinker(thinker_t *thinker)
 {
+    mobj_t *mobj = (mobj_t *) thinker;
     mobj_t *onmo;
+
+    // [crispy] suppress interpolation of player missiles for the first tic
+    if (mobj->interp == -1)
+    {
+        mobj->interp = false;
+    }
+    else
+    // [AM] Handle interpolation unless we're an active player.
+    if (!(mobj->player != NULL && mobj == mobj->player->mo))
+    {
+        // Assume we can interpolate at the beginning
+        // of the tic.
+        mobj->interp = true;
+
+        // Store starting position for mobj interpolation.
+        mobj->oldx = mobj->x;
+        mobj->oldy = mobj->y;
+        mobj->oldz = mobj->z;
+        mobj->oldangle = mobj->angle;
+    }
+
 /*
 	// Reset to not blasted when momentums are gone
 	if((mobj->flags2&MF2_BLASTED) && (!(mobj->momx)) && (!(mobj->momy)))
@@ -1246,6 +1268,15 @@ mobj_t *P_SpawnMobj(fixed_t x, fixed_t y, fixed_t z, mobjtype_t type)
         mobj->floorclip = 0;
     }
 
+    // [AM] Do not interpolate on spawn.
+    mobj->interp = false;
+
+    // [AM] Just in case interpolation is attempted...
+    mobj->oldx = mobj->x;
+    mobj->oldy = mobj->y;
+    mobj->oldz = mobj->z;
+    mobj->oldangle = mobj->angle;
+
     mobj->thinker.function = P_MobjThinker;
     P_AddThinker(&mobj->thinker);
     return (mobj);
@@ -1368,6 +1399,7 @@ void P_SpawnPlayer(mapthing_t * mthing)
     p->extralight = 0;
     p->fixedcolormap = 0;
     p->viewheight = VIEWHEIGHT;
+    pspr_interp = false; // [crispy]
     P_SetupPsprites(p);
     if (deathmatch)
     {                           // Give all keys in death match mode
@@ -1749,7 +1781,6 @@ mobj_t *P_FindMobjFromTID(int tid, int *searchPosition)
 //
 //---------------------------------------------------------------------------
 
-extern fixed_t attackrange;
 
 void P_SpawnPuff(fixed_t x, fixed_t y, fixed_t z)
 {
@@ -2283,6 +2314,10 @@ mobj_t *P_SpawnPlayerMissile(mobj_t * source, mobjtype_t type)
         MissileMobj->y += (MissileMobj->momy >> 1);
         MissileMobj->z += (MissileMobj->momz >> 1);
     }
+
+    // [crispy] suppress interpolation of player missiles for the first tic
+    MissileMobj->interp = -1;
+
     if (!P_TryMove(MissileMobj, MissileMobj->x, MissileMobj->y))
     {                           // Exploded immediately
         P_ExplodeMissile(MissileMobj);

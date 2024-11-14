@@ -2,7 +2,9 @@ AM_CFLAGS=-I$(top_srcdir)/src                           \
           -I$(top_srcdir)/textscreen                    \
           @SDL_CFLAGS@ @SDLMIXER_CFLAGS@ @SDLNET_CFLAGS@
 
-EXTRA_DIST = CMakeLists.txt
+EXTRA_DIST =                    \
+        CMakeLists.txt          \
+        strife_icon.c
 
 noinst_LIBRARIES=libstrife.a
 
@@ -35,6 +37,7 @@ hu_lib.c           hu_lib.h     \
 hu_stuff.c         hu_stuff.h   \
 info.c             info.h       \
 m_menu.c           m_menu.h     \
+m_crispy.c         m_crispy.h   \
 m_random.c         m_random.h   \
 m_saves.c          m_saves.h    \
 p_ceilng.c                      \
@@ -75,3 +78,9 @@ st_lib.c           st_lib.h     \
 st_stuff.c         st_stuff.h   \
 wi_stuff.c         wi_stuff.h
 
+if HAVE_ICONS
+
+strife_icon.c : $(top_builddir)/data/strife.png
+	$(top_builddir)/data/convert-icon $(top_builddir)/data/strife.png $@
+
+endif

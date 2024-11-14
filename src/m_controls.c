@@ -128,10 +128,16 @@ int mousebuse = -1;
 int mousebmouselook = -1; // [crispy]
 int mousebreverse = -1; // [crispy]
 
+int mousebmapzoomin = 3; // [crispy]
+int mousebmapzoomout = 4; // [crispy]
+int mousebmapmaxzoom = -1; // [crispy]
+int mousebmapfollow = -1; // [crispy]
 int mousebprevweapon = 4; // [crispy]
 int mousebnextweapon = 3; // [crispy]
 int mousebinvleft = -1;
 int mousebinvright = -1;
+int mousebuseartifact = -1;
+int mousebinvuse = -1; // [crispy]
 
 int key_message_refresh = KEY_ENTER;
 int key_pause = KEY_PAUSE;
@@ -226,6 +232,14 @@ int joybnextweapon = -1;
 int joybmenu = -1;
 int joybautomap = -1;
 
+int joybuseartifact = -1;
+int joybinvleft = -1;
+int joybinvright = -1;
+
+int joybflyup = -1;
+int joybflydown = -1;
+int joybflycenter = -1;
+
 // Control whether if a mouse button is double clicked, it acts like 
 // "use" has been pressed
 
@@ -309,6 +323,15 @@ void M_BindHereticControls(void)
 
     M_BindIntVariable("mouseb_invleft", &mousebinvleft);
     M_BindIntVariable("mouseb_invright", &mousebinvright);
+    M_BindIntVariable("mouseb_useartifact", &mousebuseartifact);
+
+    M_BindIntVariable("joyb_invleft", &joybinvleft);
+    M_BindIntVariable("joyb_invright", &joybinvright);
+    M_BindIntVariable("joyb_useartifact", &joybuseartifact);
+
+    M_BindIntVariable("joyb_flyup", &joybflyup);
+    M_BindIntVariable("joyb_flydown", &joybflydown);
+    M_BindIntVariable("joyb_flycenter", &joybflycenter);
 
     M_BindIntVariable("key_arti_quartz",        &key_arti_quartz);
     M_BindIntVariable("key_arti_urn",           &key_arti_urn);
@@ -338,6 +361,13 @@ void M_BindHexenControls(void)
 
 void M_BindStrifeControls(void)
 {
+    // [crispy] don't override default controls for Strife
+    key_lookcenter = 0;
+    key_alt_up = 0;
+    key_alt_down = 0;
+    key_alt_strafeleft = 0;
+    key_alt_straferight = 0;
+
     // These are shared with all games, but have different defaults:
     key_message_refresh = '/';
 
@@ -369,6 +399,11 @@ void M_BindStrifeControls(void)
     // manner as Hexen!
     M_BindIntVariable("mouseb_jump",        &mousebjump);
     M_BindIntVariable("joyb_jump",          &joybjump);
+
+    // [crispy]
+    M_BindIntVariable("mouseb_invleft",     &mousebinvleft);
+    M_BindIntVariable("mouseb_invright",    &mousebinvright);
+    M_BindIntVariable("mouseb_invuse",      &mousebinvuse);
 }
 
 void M_BindWeaponControls(void)
@@ -408,6 +443,10 @@ void M_BindMapControls(void)
     M_BindIntVariable("key_map_clearmark",  &key_map_clearmark);
     M_BindIntVariable("key_map_overlay",    &key_map_overlay); // [crispy]
     M_BindIntVariable("key_map_rotate",     &key_map_rotate); // [crispy]
+    M_BindIntVariable("mouseb_mapzoomin",   &mousebmapzoomin); // [crispy]
+    M_BindIntVariable("mouseb_mapzoomout",  &mousebmapzoomout); // [crispy]
+    M_BindIntVariable("mouseb_mapmaxzoom",  &mousebmapmaxzoom); // [crispy]
+    M_BindIntVariable("mouseb_mapfollow",   &mousebmapfollow); // [crispy]
 }
 
 void M_BindMenuControls(void)

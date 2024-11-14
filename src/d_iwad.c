@@ -45,6 +45,7 @@ static const iwad_t iwads[] =
     { "freedoom1.wad", doom,     retail,     "Freedoom: Phase 1" },
     { "freedm.wad",   doom2,     commercial, "FreeDM" },
     { "rekkrsa.wad",  doom,      retail,     "REKKR" }, // [crispy] REKKR
+    { "rekkrsl.wad",  doom,      retail,     "REKKR: Sunken Land" }, // [crispy] REKKR: Sunken Land (Steam retail)
     { "heretic.wad",  heretic,   retail,     "Heretic" },
     { "heretic1.wad", heretic,   shareware,  "Heretic Shareware" },
     { "hexen.wad",    hexen,     commercial, "Hexen" },
@@ -203,6 +204,30 @@ static registry_value_t root_path_keys[] =
         "PATH",
     },
 
+    // [crispy] DOOM Unity port (not Chocolate Doom compatible)
+
+    {
+        HKEY_LOCAL_MACHINE,
+        SOFTWARE_KEY "\\GOG.com\\Games\\2015545325",
+        "PATH"
+    },
+
+    // [crispy] DOOM II Unity port (not Chocolate Doom compatible)
+
+    {
+        HKEY_LOCAL_MACHINE,
+        SOFTWARE_KEY "\\GOG.com\\Games\\1426071866",
+        "PATH"
+    },
+
+    // [crispy] DOOM + DOOM II (not Chocolate Doom compatible)
+
+    {
+        HKEY_LOCAL_MACHINE,
+        SOFTWARE_KEY "\\GOG.com\\Games\\1413291984",
+        "PATH"
+    },
+
     // Strife: Veteran Edition
 
     {
@@ -263,6 +288,7 @@ static registry_value_t steam_install_location =
 static char *steam_install_subdirs[] =
 {
     "steamapps\\common\\doom 2\\base",
+    "steamapps\\common\\doom 2\\finaldoombase",
     "steamapps\\common\\final doom\\base",
     "steamapps\\common\\ultimate doom\\base",
     "steamapps\\common\\heretic shadow of the serpent riders\\base",
@@ -272,6 +298,12 @@ static char *steam_install_subdirs[] =
     // From Doom 3: BFG Edition:
 
     "steamapps\\common\\DOOM 3 BFG Edition\\base\\wads",
+
+    // [crispy] Doom 1 + Doom 2 (not Chocolate Doom compatible):
+
+    "steamapps\\common\\Doom 2\\rerelease\\DOOM II_Data\\StreamingAssets",
+    "steamapps\\common\\Ultimate Doom\\rerelease",
+    "steamapps\\common\\Ultimate Doom\\rerelease\\DOOM_Data\\StreamingAssets",
 
     // From Strife: Veteran Edition:
 
@@ -711,6 +743,7 @@ static void AddSteamDirs(void)
     steampath = M_StringJoin(homedir, "/.steam/root/steamapps/common", NULL);
 
     AddIWADPath(steampath, "/Doom 2/base");
+    AddIWADPath(steampath, "/Doom 2/finaldoombase");
     AddIWADPath(steampath, "/Master Levels of Doom/doom2");
     AddIWADPath(steampath, "/Ultimate Doom/base");
     AddIWADPath(steampath, "/Final Doom/base");
@@ -745,14 +778,14 @@ static void BuildIWADDirList(void)
     AddIWADDir(M_DirName(myargv[0]));
 
     // Add DOOMWADDIR if it is in the environment
-    env = getenv("DOOMWADDIR");
+    env = M_getenv("DOOMWADDIR");
     if (env != NULL)
     {
         AddIWADDir(env);
     }
 
     // Add dirs from DOOMWADPATH:
-    env = getenv("DOOMWADPATH");
+    env = M_getenv("DOOMWADPATH");
     if (env != NULL)
     {
         AddIWADPath(env, "");

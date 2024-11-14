@@ -145,7 +145,7 @@ void P_LoadSegs_DeePBSP (int lump)
 		if (li->sidedef->midtexture)
 		{
 		    li->backsector = 0;
-		    fprintf(stderr, "P_LoadSegs: Linedef %d has two-sided flag set, but no second sidedef\n", i);
+		    fprintf(stderr, "P_LoadSegs: Linedef %d has two-sided flag set, but no second sidedef\n", linedef);
 		}
 		else
 		    li->backsector = GetSectorAtNullAddress();
@@ -246,7 +246,7 @@ void P_LoadNodes_ZDBSP (int lump, boolean compressed)
     byte *data;
     unsigned int i;
 #ifdef HAVE_LIBZ
-    byte *output;
+    byte *output = NULL;
 #endif
 
     unsigned int orgVerts, newVerts;
@@ -442,7 +442,7 @@ void P_LoadNodes_ZDBSP (int lump, boolean compressed)
 		if (li->sidedef->midtexture)
 		{
 		    li->backsector = 0;
-		    fprintf(stderr, "P_LoadSegs: Linedef %u has two-sided flag set, but no second sidedef\n", i);
+		    fprintf(stderr, "P_LoadSegs: Linedef %u has two-sided flag set, but no second sidedef\n", linedef);
 		}
 		else
 		    li->backsector = GetSectorAtNullAddress();
@@ -485,7 +485,7 @@ void P_LoadNodes_ZDBSP (int lump, boolean compressed)
     }
 
 #ifdef HAVE_LIBZ
-    if (compressed)
+    if (compressed && output)
 	Z_Free(output);
     else
 #endif

@@ -29,10 +29,6 @@ sector_t *frontsector, *backsector;
 drawseg_t *drawsegs = NULL, *ds_p;
 int numdrawsegs = 0;
 
-// [AM] Fractional part of the current tic, in the half-open
-//      range of [0.0, 1.0).  Used for interpolation.
-extern fixed_t          fractionaltic;
-
 void R_StoreWallRange(int start, int stop);
 
 /*
@@ -209,16 +205,20 @@ void R_ClearClipSegs(void)
 void R_CheckInterpolateSector(sector_t* sector)
 {
     if (crispy->uncapped &&
-        // Only if we moved the sector last tic.
-        sector->oldgametic == gametic - 1)
+        // Only if we moved the sector last tic ...
+        sector->oldgametic == gametic - 1 &&
+        // ... and it has a thinker associated with it.
+        sector->specialdata)
     {
         // Interpolate between current and last floor/ceiling position.
         if (sector->floorheight != sector->oldfloorheight)
-            sector->interpfloorheight = sector->oldfloorheight + FixedMul(sector->floorheight - sector->oldfloorheight, fractionaltic);
+            sector->interpfloorheight =
+                LerpFixed(sector->oldfloorheight, sector->floorheight);
         else
             sector->interpfloorheight = sector->floorheight;
         if (sector->ceilingheight != sector->oldceilingheight)
-            sector->interpceilingheight = sector->oldceilingheight + FixedMul(sector->ceilingheight - sector->oldceilingheight, fractionaltic);
+            sector->interpceilingheight =
+                LerpFixed(sector->oldceilingheight, sector->ceilingheight);
         else
             sector->interpceilingheight = sector->ceilingheight;
     }
@@ -251,8 +251,8 @@ void R_AddLine(seg_t * line)
 // OPTIMIZE: quickly reject orthogonal back sides
 
     // [crispy] remove slime trails
-    angle1 = R_PointToAngle(line->v1->r_x, line->v1->r_y);
-    angle2 = R_PointToAngle(line->v2->r_x, line->v2->r_y);
+    angle1 = R_PointToAngleCrispy(line->v1->r_x, line->v1->r_y);
+    angle2 = R_PointToAngleCrispy(line->v2->r_x, line->v2->r_y);
 
 //
 // clip to view edges
@@ -314,6 +314,7 @@ void R_AddLine(seg_t * line)
     if (backsector->ceilingpic == frontsector->ceilingpic
         && backsector->floorpic == frontsector->floorpic
         && backsector->lightlevel == frontsector->lightlevel
+        && backsector->special == frontsector->special // [crispy] check for special as well
         && curline->sidedef->midtexture == 0)
         return;
 
@@ -389,8 +390,8 @@ boolean R_CheckBBox(fixed_t * bspcoord)
 //
 // check clip list for an open space
 //      
-    angle1 = R_PointToAngle(x1, y1) - viewangle;
-    angle2 = R_PointToAngle(x2, y2) - viewangle;
+    angle1 = R_PointToAngleCrispy(x1, y1) - viewangle;
+    angle2 = R_PointToAngleCrispy(x2, y2) - viewangle;
 
     span = angle1 - angle2;
     if (span >= ANG180)
@@ -464,6 +465,9 @@ void R_Subsector(int num)
 
     if (frontsector->interpfloorheight < viewz)
         floorplane = R_FindPlane(frontsector->interpfloorheight,
+                                 // [crispy] add support for MBF sky transfers
+                                 frontsector->floorpic == skyflatnum &&
+                                 frontsector->sky & PL_SKYFLAT ? frontsector->sky :
                                  frontsector->floorpic,
                                  frontsector->lightlevel,
                                  frontsector->special);
@@ -472,6 +476,9 @@ void R_Subsector(int num)
     if (frontsector->interpceilingheight > viewz
         || frontsector->ceilingpic == skyflatnum)
         ceilingplane = R_FindPlane(frontsector->interpceilingheight,
+                                   // [crispy] add support for MBF sky transfers
+                                   frontsector->ceilingpic == skyflatnum &&
+                                   frontsector->sky & PL_SKYFLAT ? frontsector->sky :
                                    frontsector->ceilingpic,
                                    frontsector->lightlevel, 0);
     else

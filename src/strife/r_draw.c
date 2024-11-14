@@ -29,6 +29,7 @@
 #include "w_wad.h"
 
 #include "r_local.h"
+#include "v_trans.h" // [crispy] blending functions
 
 // Needs access to LFB (guess what).
 #include "v_video.h"
@@ -61,7 +62,7 @@ int		scaledviewwidth;
 int		viewheight;
 int		viewwindowx;
 int		viewwindowy; 
-byte*		ylookup[MAXHEIGHT]; 
+pixel_t*		ylookup[MAXHEIGHT]; 
 int		columnofs[MAXWIDTH]; 
 
 // Color tables for different players,
@@ -74,7 +75,7 @@ int		columnofs[MAXWIDTH];
 // Backing buffer containing the bezel drawn around the screen and 
 // surrounding background.
 
-static byte *background_buffer = NULL;
+static pixel_t *background_buffer = NULL;
 
 // haleyjd 08/29/10: [STRIFE] Rogue added the ability to customize the view
 // border flat by storing it in the configuration file.
@@ -90,6 +91,7 @@ int			dc_yl;
 int			dc_yh; 
 fixed_t			dc_iscale; 
 fixed_t			dc_texturemid;
+int			dc_texheight; // [crispy] Tutti-Frutti fix
 
 // first pixel in a column (possibly virtual) 
 byte*			dc_source;		
@@ -104,12 +106,16 @@ int			dccount;
 // Thus a special case loop for very fast rendering can
 //  be used. It has also been used with Wolfenstein 3D.
 // 
+// [crispy] replace R_DrawColumn() with Lee Killough's implementation
+// found in MBF to fix Tutti-Frutti, taken from mbfsrc/R_DRAW.C:99-1979
+
 void R_DrawColumn (void) 
 { 
     int			count; 
-    byte*		dest; 
+    pixel_t*		dest; 
     fixed_t		frac;
     fixed_t		fracstep;	 
+    int			heightmask = dc_texheight - 1;
  
     count = dc_yh - dc_yl; 
 
@@ -137,16 +143,41 @@ void R_DrawColumn (void)
     // Inner loop that does the actual texture mapping,
     //  e.g. a DDA-lile scaling.
     // This is as fast as it gets.
+
+  // heightmask is the Tutti-Frutti fix -- killough
+  if (dc_texheight & heightmask) // not a power of 2 -- killough
+  {
+    heightmask++;
+    heightmask <<= FRACBITS;
+
+    if (frac < 0)
+	while ((frac += heightmask) < 0);
+    else
+	while (frac >= heightmask)
+	    frac -= heightmask;
+
+    do
+    {
+	*dest = dc_colormap[dc_source[frac>>FRACBITS]];
+
+	dest += SCREENWIDTH;
+	if ((frac += fracstep) >= heightmask)
+	    frac -= heightmask;
+    } while (count--);
+  }
+  else // texture height is a power of 2 -- killough
+  {
     do 
     {
 	// Re-map color indices from wall texture column
 	//  using a lighting/special effects LUT.
-	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+	*dest = dc_colormap[dc_source[(frac>>FRACBITS)&heightmask]];
 	
 	dest += SCREENWIDTH; 
 	frac += fracstep;
 	
     } while (count--); 
+  }
 } 
 
 
@@ -226,10 +257,12 @@ void R_DrawColumn (void)
 void R_DrawMVisTLColumn(void)
 {
     int                 count; 
-    byte*               dest; 
+    pixel_t*               dest; 
     fixed_t             frac;
     fixed_t             fracstep;
 
+// [crispy] Show transparent lines at top and bottom of screen.
+/*
     // Adjust borders. Low... 
     if (!dc_yl) 
         dc_yl = 1;
@@ -237,6 +270,7 @@ void R_DrawMVisTLColumn(void)
     // .. and high.
     if (dc_yh == viewheight-1) 
         dc_yh = viewheight - 2; 
+*/
 
     count = dc_yh - dc_yl; 
 
@@ -261,9 +295,15 @@ void R_DrawMVisTLColumn(void)
 
     do
     {
-        byte src = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
-        byte col = xlatab[*dest + (src << 8)];
+        pixel_t src = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+#ifndef CRISPY_TRUECOLOR
+        pixel_t col = xlatab[*dest + (src << 8)];
         *dest = col;
+#else
+        // [crispy] 75% opacity
+        const pixel_t destrgb = src;
+        *dest = I_BlendOverXlatab(*dest, destrgb);
+#endif
         dest += SCREENWIDTH;
         frac += fracstep;
     } while(count--);
@@ -279,10 +319,12 @@ void R_DrawMVisTLColumn(void)
 void R_DrawTLColumn(void)
 {
     int                 count; 
-    byte*               dest; 
+    pixel_t*               dest; 
     fixed_t             frac;
     fixed_t             fracstep;	 
 
+// [crispy] Show transparent lines at top and bottom of screen.
+/*
     // Adjust borders. Low... 
     if (!dc_yl) 
         dc_yl = 1;
@@ -290,6 +332,7 @@ void R_DrawTLColumn(void)
     // .. and high.
     if (dc_yh == viewheight-1) 
         dc_yh = viewheight - 2; 
+*/
 
     count = dc_yh - dc_yl; 
 
@@ -314,9 +357,15 @@ void R_DrawTLColumn(void)
 
     do
     {
-        byte src = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
-        byte col = xlatab[(*dest << 8) + src];
+        pixel_t src = dc_colormap[dc_source[(frac>>FRACBITS)&127]];
+#ifndef CRISPY_TRUECOLOR
+        pixel_t col = xlatab[(*dest << 8) + src];
         *dest = col;
+#else
+        // [crispy] 25% opacity
+        const pixel_t destrgb = src;
+        *dest = I_BlendOverAltXlatab(*dest, destrgb);
+#endif
         dest += SCREENWIDTH;
         frac += fracstep;
     } while(count--);
@@ -339,7 +388,7 @@ byte*	translationtables;
 void R_DrawTranslatedColumn (void) 
 { 
     int                 count; 
-    byte*               dest; 
+    pixel_t*               dest; 
     fixed_t             frac;
     fixed_t             fracstep;
 
@@ -389,7 +438,7 @@ void R_DrawTranslatedColumn (void)
 void R_DrawTRTLColumn(void)
 {
     int                 count; 
-    byte*               dest; 
+    pixel_t*               dest; 
     fixed_t             frac;
     fixed_t             fracstep;
 
@@ -416,9 +465,14 @@ void R_DrawTRTLColumn(void)
     // Here we do an additional index re-mapping.
     do 
     {
-        byte src = dc_colormap[dc_translation[dc_source[frac>>FRACBITS&127]]];
-        byte col = xlatab[(*dest << 8) + src];
+        pixel_t src = dc_colormap[dc_translation[dc_source[frac>>FRACBITS&127]]];
+#ifndef CRISPY_TRUECOLOR
+        pixel_t col = xlatab[(*dest << 8) + src];
         *dest = col;
+#else
+        const pixel_t destrgb = src;
+        *dest = blendfunc(*dest, destrgb);
+#endif
         dest += SCREENWIDTH;
         frac += fracstep; 
     } while (count--); 
@@ -451,7 +505,9 @@ void R_InitTranslationTables (void)
     // strictly portable, all we need to do is this:
 
     // villsa [STRIFE] 09/26/10: load table through this function instead
+#ifndef CRISPY_TRUECOLOR
     V_LoadXlaTable();
+#endif
 
     // villsa [STRIFE] allocate a larger size for translation tables
     translationtables = Z_Malloc (256*8, PU_STATIC, 0);
@@ -588,8 +644,8 @@ int			dscount;
 // Draws the actual span.
 void R_DrawSpan (void) 
 { 
-    unsigned int position, step;
-    byte *dest;
+//  unsigned int position, step;
+    pixel_t *dest;
     int count;
     int spot;
     unsigned int xtemp, ytemp;
@@ -611,10 +667,12 @@ void R_DrawSpan (void)
     // each 16-bit part, the top 6 bits are the integer part and the
     // bottom 10 bits are the fractional part of the pixel position.
 
+/*
     position = ((ds_xfrac << 10) & 0xffff0000)
              | ((ds_yfrac >> 6)  & 0x0000ffff);
     step = ((ds_xstep << 10) & 0xffff0000)
          | ((ds_ystep >> 6)  & 0x0000ffff);
+*/
 
     dest = ylookup[ds_y] + columnofs[ds_x1];
 
@@ -624,15 +682,18 @@ void R_DrawSpan (void)
     do
     {
 	// Calculate current texture index in u,v.
-        ytemp = (position >> 4) & 0x0fc0;
-        xtemp = (position >> 26);
+        // [crispy] fix flats getting more distorted the closer they are to the right
+        ytemp = (ds_yfrac >> 10) & 0x0fc0;
+        xtemp = (ds_xfrac >> 16) & 0x3f;
         spot = xtemp | ytemp;
 
 	// Lookup pixel from flat texture tile,
 	//  re-index using light/colormap.
 	*dest++ = ds_colormap[ds_source[spot]];
 
-        position += step;
+//      position += step;
+        ds_xfrac += ds_xstep;
+        ds_yfrac += ds_ystep;
 
     } while (count--);
 }
@@ -717,9 +778,9 @@ void R_DrawSpan (void)
 //
 void R_DrawSpanLow (void)
 {
-    unsigned int position, step;
+//  unsigned int position, step;
     unsigned int xtemp, ytemp;
-    byte *dest;
+    pixel_t *dest;
     int count;
     int spot;
 
@@ -735,10 +796,12 @@ void R_DrawSpanLow (void)
 //	dscount++; 
 #endif
 
+/*
     position = ((ds_xfrac << 10) & 0xffff0000)
              | ((ds_yfrac >> 6)  & 0x0000ffff);
     step = ((ds_xstep << 10) & 0xffff0000)
          | ((ds_ystep >> 6)  & 0x0000ffff);
+*/
 
     count = (ds_x2 - ds_x1);
 
@@ -751,8 +814,9 @@ void R_DrawSpanLow (void)
     do
     {
 	// Calculate current texture index in u,v.
-        ytemp = (position >> 4) & 0x0fc0;
-        xtemp = (position >> 26);
+        // [crispy] fix flats getting more distorted the closer they are to the right
+        ytemp = (ds_yfrac >> 10) & 0x0fc0;
+        xtemp = (ds_xfrac >> 16) & 0x3f;
         spot = xtemp | ytemp;
 
 	// Lowres/blocky mode does it twice,
@@ -760,7 +824,9 @@ void R_DrawSpanLow (void)
 	*dest++ = ds_colormap[ds_source[spot]];
 	*dest++ = ds_colormap[ds_source[spot]];
 
-	position += step;
+//	position += step;
+	ds_xfrac += ds_xstep;
+	ds_yfrac += ds_ystep;
 
     } while (count--);
 }
@@ -813,7 +879,7 @@ R_InitBuffer
 void R_FillBackScreen (void) 
 { 
     byte*	src;
-    byte*	dest; 
+    pixel_t*	dest; 
     int		x;
     int		y; 
     patch_t*	patch;
@@ -838,7 +904,7 @@ void R_FillBackScreen (void)
 	
     if (background_buffer == NULL)
     {
-        background_buffer = Z_Malloc(SCREENWIDTH * (SCREENHEIGHT - SBARHEIGHT),
+        background_buffer = Z_Malloc(MAXWIDTH * (MAXHEIGHT - SBARHEIGHT) * sizeof(*background_buffer),
                                      PU_STATIC, NULL);
     }
 
@@ -848,20 +914,8 @@ void R_FillBackScreen (void)
     src = W_CacheLumpName(name, PU_CACHE); 
     dest = background_buffer;
 	 
-    for (y=0 ; y<SCREENHEIGHT-SBARHEIGHT ; y++) 
-    { 
-	for (x=0 ; x<SCREENWIDTH/64 ; x++) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), 64); 
-	    dest += 64; 
-	} 
-
-	if (SCREENWIDTH&63) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), SCREENWIDTH&63); 
-	    dest += (SCREENWIDTH&63); 
-	} 
-    } 
+    // [crispy] use unified flat filling function
+    V_FillFlat(0, SCREENHEIGHT-SBARHEIGHT, 0, SCREENWIDTH, src, dest);
      
     // Draw screen and bezel; this is done to a separate screen buffer.
 
@@ -870,34 +924,34 @@ void R_FillBackScreen (void)
     patch = W_CacheLumpName(DEH_String("brdr_t"),PU_CACHE);
 
     for (x=0 ; x<(scaledviewwidth >> crispy->hires) ; x+=8)
-	V_DrawPatch((viewwindowx >> crispy->hires)+x, (viewwindowy >> crispy->hires)-8, patch);
+	V_DrawPatch((viewwindowx >> crispy->hires)+x-WIDESCREENDELTA, (viewwindowy >> crispy->hires)-8, patch);
     patch = W_CacheLumpName(DEH_String("brdr_b"),PU_CACHE);
 
     for (x=0 ; x<(scaledviewwidth >> crispy->hires) ; x+=8)
-	V_DrawPatch((viewwindowx >> crispy->hires)+x, (viewwindowy >> crispy->hires)+(viewheight >> crispy->hires), patch);
+	V_DrawPatch((viewwindowx >> crispy->hires)+x-WIDESCREENDELTA, (viewwindowy >> crispy->hires)+(viewheight >> crispy->hires), patch);
     patch = W_CacheLumpName(DEH_String("brdr_l"),PU_CACHE);
 
     for (y=0 ; y<(viewheight >> crispy->hires) ; y+=8)
-	V_DrawPatch((viewwindowx >> crispy->hires)-8, (viewwindowy >> crispy->hires)+y, patch);
+	V_DrawPatch((viewwindowx >> crispy->hires)-8-WIDESCREENDELTA, (viewwindowy >> crispy->hires)+y, patch);
     patch = W_CacheLumpName(DEH_String("brdr_r"),PU_CACHE);
 
     for (y=0 ; y<(viewheight >> crispy->hires) ; y+=8)
-	V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires), (viewwindowy >> crispy->hires)+y, patch);
+	V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires)-WIDESCREENDELTA, (viewwindowy >> crispy->hires)+y, patch);
 
     // Draw beveled edge. 
-    V_DrawPatch((viewwindowx >> crispy->hires)-8,
+    V_DrawPatch((viewwindowx >> crispy->hires)-8-WIDESCREENDELTA,
                 (viewwindowy >> crispy->hires)-8,
                 W_CacheLumpName(DEH_String("brdr_tl"),PU_CACHE));
     
-    V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires),
+    V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires)-WIDESCREENDELTA,
                 (viewwindowy >> crispy->hires)-8,
                 W_CacheLumpName(DEH_String("brdr_tr"),PU_CACHE));
     
-    V_DrawPatch((viewwindowx >> crispy->hires)-8,
+    V_DrawPatch((viewwindowx >> crispy->hires)-8-WIDESCREENDELTA,
                 (viewwindowy >> crispy->hires)+(viewheight >> crispy->hires),
                 W_CacheLumpName(DEH_String("brdr_bl"),PU_CACHE));
     
-    V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires),
+    V_DrawPatch((viewwindowx >> crispy->hires)+(scaledviewwidth >> crispy->hires)-WIDESCREENDELTA,
                 (viewwindowy >> crispy->hires)+(viewheight >> crispy->hires),
                 W_CacheLumpName(DEH_String("brdr_br"),PU_CACHE));
 
@@ -921,7 +975,7 @@ R_VideoErase
 
     if (background_buffer != NULL)
     {
-        memcpy(I_VideoBuffer + ofs, background_buffer + ofs, count); 
+        memcpy(I_VideoBuffer + ofs, background_buffer + ofs, count * sizeof(*I_VideoBuffer)); 
     }
 } 
 

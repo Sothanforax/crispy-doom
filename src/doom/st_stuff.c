@@ -81,23 +81,12 @@ extern boolean inhelpscreens; // [crispy] prevent palette changes
 // Radiation suit, green shift.
 #define RADIATIONPAL		13
 
-// N/256*100% probability
-//  that the normal face state will change
-#define ST_FACEPROBABILITY		96
-
-// For Responder
-#define ST_TOGGLECHAT		KEY_ENTER
-
 // Location of status bar
 #define ST_X				0
 #define ST_X2				104
 
 #define ST_FX  			143
 #define ST_FY  			169
-
-// Should be set to patch width
-//  for tall numbers later on
-#define ST_TALLNUMWIDTH		(tallnum[0]->width)
 
 // Number of status faces.
 #define ST_NUMPAINFACES		5
@@ -139,9 +128,6 @@ extern boolean inhelpscreens; // [crispy] prevent palette changes
 //       Problem is, is the stuff rendered
 //       into a buffer,
 //       or into the frame buffer?
-
-// [crispy] in non-widescreen mode WIDESCREENDELTA is 0 anyway
-#define ST_WIDESCREENDELTA ((screenblocks >= CRISPY_HUD + 3 && (!automapactive || crispy->automapoverlay)) ? WIDESCREENDELTA : 0)
 
 // AMMO number pos.
 #define ST_AMMOWIDTH		3	
@@ -214,62 +200,8 @@ extern boolean inhelpscreens; // [crispy] prevent palette changes
 #define ST_MAXAMMO3X		(314 + ST_WIDESCREENDELTA)
 #define ST_MAXAMMO3Y		185
 
-// pistol
-#define ST_WEAPON0X			110 
-#define ST_WEAPON0Y			172
-
-// shotgun
-#define ST_WEAPON1X			122 
-#define ST_WEAPON1Y			172
-
-// chain gun
-#define ST_WEAPON2X			134 
-#define ST_WEAPON2Y			172
-
-// missile launcher
-#define ST_WEAPON3X			110 
-#define ST_WEAPON3Y			181
-
-// plasma gun
-#define ST_WEAPON4X			122 
-#define ST_WEAPON4Y			181
-
- // bfg
-#define ST_WEAPON5X			134
-#define ST_WEAPON5Y			181
-
-// WPNS title
-#define ST_WPNSX			109 
-#define ST_WPNSY			191
-
- // DETH title
-#define ST_DETHX			109
-#define ST_DETHY			191
-
-//Incoming messages window location
-//UNUSED
-// #define ST_MSGTEXTX	   (viewwindowx)
-// #define ST_MSGTEXTY	   (viewwindowy+viewheight-18)
-#define ST_MSGTEXTX			0
-#define ST_MSGTEXTY			0
 // Dimensions given in characters.
 #define ST_MSGWIDTH			52
-// Or shall I say, in lines?
-#define ST_MSGHEIGHT		1
-
-#define ST_OUTTEXTX			0
-#define ST_OUTTEXTY			6
-
-// Width, in characters again.
-#define ST_OUTWIDTH			52 
- // Height, in lines. 
-#define ST_OUTHEIGHT		1
-
-#define ST_MAPTITLEX \
-    (ORIGWIDTH - ST_MAPWIDTH * ST_CHATFONTWIDTH)
-
-#define ST_MAPTITLEY		0
-#define ST_MAPHEIGHT		1
 
 // graphics are drawn to a backing screen and blitted to the real screen
 pixel_t			*st_backing_screen;
@@ -283,17 +215,8 @@ static boolean		st_firsttime;
 // lump number for PLAYPAL
 static int		lu_palette;
 
-// used for timing
-static unsigned int	st_clock;
-
 // used for making messages go away
 static int		st_msgcounter=0;
-
-// used when in chat 
-static st_chatstateenum_t	st_chatstate;
-
-// whether in automap or first-person
-static st_stateenum_t	st_gamestate;
 
 // whether left-side main status bar is active
 static boolean		st_statusbaron;
@@ -308,9 +231,6 @@ static boolean		st_chat;
 
 // value of st_chat before message popped up
 static boolean		st_oldchat;
-
-// whether chat window has the cursor on
-static boolean		st_cursoron;
 
 // !deathmatch
 static boolean		st_notdeathmatch; 
@@ -343,7 +263,7 @@ static patch_t*		keys[NUMCARDS+3]; // [crispy] support combined card and skull k
 static patch_t*		faces[ST_NUMFACES];
 
 // face background
-static patch_t*		faceback;
+static patch_t*		faceback[MAXPLAYERS]; // [crispy] killough 3/7/98: make array
 
  // main bar right
 static patch_t*		armsbg;
@@ -487,7 +407,6 @@ void ST_refreshBackground(boolean force)
 	// so it appears to the left and right of the status bar in widescreen mode
 	if ((SCREENWIDTH >> crispy->hires) != ST_WIDTH)
 	{
-		int x, y;
 		byte *src;
 		pixel_t *dest;
 		const char *name = (gamemode == commercial) ? DEH_String("GRNROCK") : DEH_String("FLOOR7_2");
@@ -495,21 +414,13 @@ void ST_refreshBackground(boolean force)
 		src = W_CacheLumpName(name, PU_CACHE);
 		dest = st_backing_screen;
 
-		for (y = SCREENHEIGHT-(ST_HEIGHT<<crispy->hires); y < SCREENHEIGHT; y++)
-		{
-			for (x = 0; x < SCREENWIDTH; x++)
-			{
-#ifndef CRISPY_TRUECOLOR
-				*dest++ = src[((y&63)<<6) + (x&63)];
-#else
-				*dest++ = colormaps[src[((y&63)<<6) + (x&63)]];
-#endif
-			}
-		}
+		// [crispy] use unified flat filling function
+		V_FillFlat(SCREENHEIGHT-(ST_HEIGHT<<crispy->hires), SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 
 		// [crispy] preserve bezel bottom edge
 		if (scaledviewwidth == SCREENWIDTH)
 		{
+			int x;
 			patch_t *const patch = W_CacheLumpName(DEH_String("brdr_b"), PU_CACHE);
 
 			for (x = 0; x < WIDESCREENDELTA; x += 8)
@@ -538,13 +449,14 @@ void ST_refreshBackground(boolean force)
 	if (!deathmatch)
 	    V_DrawPatch(ST_ARMSBGX, 0, armsbg);
 
+	// [crispy] killough 3/7/98: make face background change with displayplayer
 	if (netgame)
-	    V_DrawPatch(ST_FX, 0, faceback);
+	    V_DrawPatch(ST_FX, 0, faceback[displayplayer]);
 
         V_RestoreBuffer();
 
 	// [crispy] copy entire SCREENWIDTH, to preserve the pattern
-	// to the left and right of the status bar in widescren mode
+	// to the left and right of the status bar in widescreen mode
 	if (!force)
 	{
 	    V_CopyRect(ST_X, 0, st_backing_screen, SCREENWIDTH >> crispy->hires, ST_HEIGHT, ST_X, ST_Y);
@@ -737,13 +649,11 @@ ST_Responder (event_t* ev)
     switch(ev->data1)
     {
       case AM_MSGENTERED:
-	st_gamestate = AutomapState;
 	st_firsttime = true;
 	break;
 	
       case AM_MSGEXITED:
 	//	fprintf(stderr, "AM exited\n");
-	st_gamestate = FirstPersonState;
 	break;
     }
   }
@@ -773,6 +683,11 @@ ST_Responder (event_t* ev)
 	    an = plyr->mo->angle >> ANGLETOFINESHIFT;
 	    P_SpawnMobj(plyr->mo->x+20*finecosine[an], plyr->mo->y+20*finesine[an], plyr->mo->z, MT_TFOG);
 	    S_StartSound(plyr, sfx_slop);
+
+	    // Fix reviving as "zombie" if god mode was already enabled
+	    if (plyr->mo)
+	        plyr->mo->health = deh_god_mode_health;
+	    plyr->health = deh_god_mode_health;
 	}
 
 	plyr->cheats ^= CF_GODMODE;
@@ -1061,6 +976,8 @@ ST_Responder (event_t* ev)
 
 	EV_DoGoobers();
 
+	R_SetGoobers(true);
+
 	M_snprintf(msg, sizeof(msg), "Get Psyched!");
 	plyr->message = msg;
       }
@@ -1162,11 +1079,6 @@ ST_Responder (event_t* ev)
 	    plyr->message = msg;
 	}
       }
-      // [crispy] snow
-      else if (cht_CheckCheatSP(&cheat_snow, ev->data2))
-      {
-    crispy->snowflakes = !crispy->snowflakes;
-      }
     }
 
 // [crispy] now follow "harmless" Crispy Doom specific cheats
@@ -1210,6 +1122,11 @@ ST_Responder (event_t* ev)
       M_snprintf(msg, sizeof(msg), "Skill: %s",
                  skilltable[BETWEEN(0,5,(int) gameskill+1)]);
       plyr->message = msg;
+    }
+    // [crispy] snow
+    else if (cht_CheckCheat(&cheat_snow, ev->data2))
+    {
+      crispy->snowflakes = !crispy->snowflakes;
     }
     
     // 'clev' change-level cheat
@@ -1270,7 +1187,8 @@ ST_Responder (event_t* ev)
           if (epsd > 4)
           {
               // [crispy] Sigil
-              if (!(crispy->haved1e5 && epsd == 5))
+              if (!(crispy->haved1e5 && epsd == 5) &&
+                  !(crispy->haved1e6 && epsd == 6))
               return false;
           }
           if (epsd == 4 && gameversion < exe_ultimate)
@@ -1332,17 +1250,16 @@ ST_Responder (event_t* ev)
       // [crisp] allow IDCLEV during demo playback and warp to the requested map
       if (demoplayback)
       {
-          if (map > gamemap)
+          crispy->demowarp = map;
+          nodrawers = true;
+          singletics = true;
+
+          if (map <= gamemap)
           {
-              crispy->demowarp = map;
-              nodrawers = true;
-              singletics = true;
-              return true;
+              G_DoPlayDemo();
           }
-          else
-          {
-              return false;
-          }
+
+           return true;
       }
       else
       G_DeferedInitNew(gameskill, epsd, map);
@@ -1658,7 +1575,7 @@ void ST_updateWidgets(void)
 
     for (i=0 ; i<MAXPLAYERS ; i++)
     {
-	if (i != consoleplayer)
+	if (i != displayplayer)
 	    st_fragscount += plyr->frags[i];
 	else
 	    st_fragscount -= plyr->frags[i];
@@ -1671,20 +1588,22 @@ void ST_updateWidgets(void)
 }
 
 static int st_widescreendelta;
+static void ST_doPaletteStuff(void);
 
 void ST_Ticker (void)
 {
 
-    st_clock++;
     st_randomnumber = M_Random();
     ST_updateWidgets();
     st_oldhealth = plyr->health;
 
+    // Do red-/gold-shifts from damage/items
+    ST_doPaletteStuff();
 }
 
 static int st_palette = 0;
 
-void ST_doPaletteStuff(void)
+static void ST_doPaletteStuff(void)
 {
 
     int		palette;
@@ -1876,6 +1795,15 @@ static byte* ST_WidgetColor(int i)
 
 // [crispy] draw the gibbed death state frames in the Health widget
 // in sync with the actual player sprite
+static inline boolean ST_PlayerIsGibbed (void)
+{
+       const int state = plyr->mo->state - states;
+
+       return (plyr->health <= 0 &&
+               ((state >= S_PLAY_XDIE1 && state <= S_PLAY_XDIE9) ||
+               state == S_GIBS));
+}
+
 static inline void ST_DrawGibbedPlayerSprites (void)
 {
 	state_t const *state = plyr->mo->state;
@@ -1949,10 +1877,9 @@ void ST_drawWidgets(boolean refresh)
 
 	// [crispy] draw the gibbed death state frames in the Health widget
 	// in sync with the actual player sprite
-	if (plyr->health <= 0 && plyr->mo->state - states >= mobjinfo[plyr->mo->type].xdeathstate)
+	if ((gibbed = ST_PlayerIsGibbed()))
 	{
 		ST_DrawGibbedPlayerSprites();
-		gibbed = true;
 	}
    }
 
@@ -1984,7 +1911,10 @@ void ST_drawWidgets(boolean refresh)
     // [crispy] draw the actual face widget background
     if (st_crispyhud && (screenblocks % 3 == 0))
     {
-	V_CopyRect(ST_FX + WIDESCREENDELTA, 1, st_backing_screen, SHORT(faceback->width), ST_HEIGHT - 1, ST_FX + WIDESCREENDELTA, ST_Y + 1);
+		if (netgame)
+		V_DrawPatch(ST_FX, ST_Y + 1, faceback[displayplayer]);
+		else
+		V_CopyRect(ST_FX + WIDESCREENDELTA, 1, st_backing_screen, SHORT(faceback[0]->width), ST_HEIGHT - 1, ST_FX + WIDESCREENDELTA, ST_Y + 1);
     }
 
     STlib_updateMultIcon(&w_faces, refresh);
@@ -2038,9 +1968,6 @@ void ST_Drawer (boolean fullscreen, boolean refresh)
 
     if (crispy->cleanscreenshot == 2)
         return;
-
-    // Do red-/gold-shifts from damage/items
-    ST_doPaletteStuff();
 
     // [crispy] translucent HUD
     if (st_crispyhud && (screenblocks % 3 == 2))
@@ -2106,8 +2033,13 @@ static void ST_loadUnloadGraphics(load_callback_t callback)
     }
 
     // face backgrounds for different color players
-    DEH_snprintf(namebuf, 9, "STFB%d", consoleplayer);
-    callback(namebuf, &faceback);
+    // [crispy] killough 3/7/98: add better support for spy mode by loading
+    // all player face backgrounds and using displayplayer to choose them:
+    for (i=0; i<MAXPLAYERS; i++)
+    {
+    DEH_snprintf(namebuf, 9, "STFB%d", i);
+    callback(namebuf, &faceback[i]);
+    }
 
     // status bar background bits
     if (W_CheckNumForName("STBAR") >= 0)
@@ -2207,15 +2139,10 @@ void ST_initData(void)
     int		i;
 
     st_firsttime = true;
-    plyr = &players[consoleplayer];
-
-    st_clock = 0;
-    st_chatstate = StartChatState;
-    st_gamestate = FirstPersonState;
+    plyr = &players[displayplayer];
 
     st_statusbaron = true;
     st_oldchat = st_chat = false;
-    st_cursoron = false;
 
     faceindex = 0; // [crispy] fix status bar face hysteresis across level changes
     st_faceindex = 0;
@@ -2414,15 +2341,6 @@ void ST_Start (void)
     ST_createWidgets();
     st_stopped = false;
 
-    // [crispy] correctly color the status bar face background in multiplayer
-    // demos recorded by another player than player 1
-    if (netgame && consoleplayer)
-    {
-	char namebuf[8];
-
-	DEH_snprintf(namebuf, 7, "STFB%d", consoleplayer);
-	faceback = W_CacheLumpName(namebuf, PU_STATIC);
-    }
 }
 
 void ST_Stop (void)

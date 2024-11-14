@@ -143,8 +143,8 @@ anim_t* lastanim;
 // haleyjd 08/29/10: [STRIFE] MAXLINEANIMS raised from 64 to 96
 #define MAXLINEANIMS            96*256
 
-extern  short   numlinespecials;
-extern  line_t* linespeciallist[MAXLINEANIMS];
+short   numlinespecials = 0;
+line_t *linespeciallist[MAXLINEANIMS];
 
 
 
@@ -1612,22 +1612,34 @@ void P_UpdateSpecials (void)
         {
         case 48:
             // EFFECT FIRSTCOL SCROLL +
-            sides[line->sidenum[0]].textureoffset += FRACUNIT;
+            // [crispy] smooth texture scrolling
+            sides[line->sidenum[0]].basetextureoffset += FRACUNIT;
+            sides[line->sidenum[0]].textureoffset =
+            sides[line->sidenum[0]].basetextureoffset;
             break;
 
         case 142:
             // haleyjd 09/25/10 [STRIFE] Scroll Up Slow
-            sides[line->sidenum[0]].rowoffset += FRACUNIT;
+            // [crispy] smooth texture scrolling
+            sides[line->sidenum[0]].baserowoffset += FRACUNIT;
+            sides[line->sidenum[0]].rowoffset =
+            sides[line->sidenum[0]].baserowoffset;
             break;
 
         case 143:
             // haleyjd 09/25/10 [STRIFE] Scroll Down Fast (3 Units/Tic)
-            sides[line->sidenum[0]].rowoffset -= 3*FRACUNIT;
+            // [crispy] smooth texture scrolling
+            sides[line->sidenum[0]].baserowoffset -= 3*FRACUNIT;
+            sides[line->sidenum[0]].rowoffset =
+            sides[line->sidenum[0]].baserowoffset;
             break;
 
         case 149:
             // haleyjd 09/25/10 [STRIFE] Scroll Down Slow
-            sides[line->sidenum[0]].rowoffset -= FRACUNIT;
+            // [crispy] smooth texture scrolling
+            sides[line->sidenum[0]].baserowoffset -= FRACUNIT;
+            sides[line->sidenum[0]].rowoffset =
+            sides[line->sidenum[0]].baserowoffset;
             break;
         }
     }
@@ -1663,6 +1675,39 @@ void P_UpdateSpecials (void)
         }
 }
 
+// [crispy] smooth texture scrolling
+void R_InterpolateTextureOffsets (void)
+{
+    if (crispy->uncapped && leveltime > oldleveltime)
+    {
+        int i;
+
+        for (i = 0; i < numlinespecials; i++)
+        {
+            const line_t *const line = linespeciallist[i];
+            side_t *const side = &sides[line->sidenum[0]];
+
+            switch (line->special)
+            {
+                case 48: // EFFECT FIRSTCOL SCROLL +
+                    side->textureoffset = side->basetextureoffset + fractionaltic;
+                    break;
+
+                case 142: // [STRIFE] Scroll Up Slow
+                    side->rowoffset = side->baserowoffset + fractionaltic;
+                    break;
+
+                case 143: // [STRIFE] Scroll Down Fast (3 Units/Tic)
+                    side->rowoffset = side->baserowoffset - FixedMul(3*FRACUNIT, fractionaltic);
+                    break;
+
+                case 149: // [STRIFE] Scroll Down Slow
+                    side->rowoffset = side->baserowoffset - fractionaltic;
+                    break;
+            }
+        }
+    }
+}
 
 //
 // Donut overrun emulation
@@ -1680,8 +1725,6 @@ static void DonutOverrun(fixed_t *s3_floorheight, short *s3_floorpic,
     static int first = 1;
     static int tmp_s3_floorheight;
     static int tmp_s3_floorpic;
-
-    extern int numflats;
 
     if (first)
     {
@@ -1865,8 +1908,6 @@ int EV_DoDonut(line_t*	line)
 // After the map has been loaded, scan for specials
 //  that spawn thinkers
 //
-short		numlinespecials;
-line_t*		linespeciallist[MAXLINEANIMS];
 
 
 // Parses command line parameters.

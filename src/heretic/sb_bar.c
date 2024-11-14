@@ -26,6 +26,10 @@
 #include "p_local.h"
 #include "s_sound.h"
 #include "v_video.h"
+#include "am_map.h"
+#ifdef CRISPY_TRUECOLOR
+#include "v_trans.h" // [crispy] I_BlendDark()
+#endif
 
 // Types
 
@@ -315,6 +319,7 @@ void SB_Ticker(void)
         }
         HealthMarker += delta;
     }
+    SB_PaletteFlash();
 }
 
 //---------------------------------------------------------------------------
@@ -433,20 +438,31 @@ static void DrSmallNumber(int val, int x, int y)
 
 static void ShadeLine(int x, int y, int height, int shade)
 {
-    byte *dest;
+    pixel_t *dest;
+#ifndef CRISPY_TRUECOLOR
     byte *shades;
+#endif
 
     x <<= crispy->hires;
     y <<= crispy->hires;
     height <<= crispy->hires;
 
+#ifndef CRISPY_TRUECOLOR
     shades = colormaps + 9 * 256 + shade * 2 * 256;
+#else
+    shade = 0xFF - (((9 + shade * 2) << 8) / 32); // [crispy] shade to darkest 32nd COLORMAP row
+#endif
     dest = I_VideoBuffer + y * SCREENWIDTH + x + (WIDESCREENDELTA << crispy->hires);
     while (height--)
     {
         if (crispy->hires)
+#ifndef CRISPY_TRUECOLOR
             *(dest + 1) = *(shades + *dest);
         *(dest) = *(shades + *dest);
+#else
+            *(dest + 1) = I_BlendDark(*dest, shade);
+        *(dest) = I_BlendDark(*dest, shade);
+#endif
         dest += SCREENWIDTH;
     }
 }
@@ -575,7 +591,6 @@ static int oldkeys = -1;
 
 int playerkeys = 0;
 
-extern boolean automapactive;
 
 // [crispy] Needed to support widescreen status bar.
 void SB_ForceRedraw(void)
@@ -592,7 +607,6 @@ static void RefreshBackground()
 
     if ((SCREENWIDTH >> crispy->hires) != ORIGWIDTH)
     {
-        int x, y;
         byte *src;
         pixel_t *dest;
         const char *name = (gamemode == shareware) ?
@@ -602,17 +616,12 @@ static void RefreshBackground()
         src = W_CacheLumpName(name, PU_CACHE);
         dest = st_backing_screen;
 
-        for (y = SCREENHEIGHT - (42 << crispy->hires); y < SCREENHEIGHT; y++)
-        {
-            for (x = 0; x < SCREENWIDTH; x++)
-            {
-                *dest++ = src[((y & 63) << 6) + (x & 63)];
-            }
-        }
+        V_FillFlat(SCREENHEIGHT - (42 << crispy->hires), SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 
         // [crispy] preserve bezel bottom edge
         if (scaledviewwidth == SCREENWIDTH)
         {
+            int x;
             patch_t *const patch = W_CacheLumpName("bordb", PU_CACHE);
 
             for (x = 0; x < WIDESCREENDELTA; x += 16)
@@ -627,10 +636,13 @@ static void RefreshBackground()
     V_CopyRect(0, 0, st_backing_screen, SCREENWIDTH >> crispy->hires, 42, 0, 158);
 }
 
+extern int left_widget_w, right_widget_w; // [crispy]
+
 void SB_Drawer(void)
 {
     int frame;
     static boolean hitCenterFrame;
+    int spinfly_x, spinbook_x; // [crispy]
 
     // Sound info debug stuff
     if (DebugSound == true)
@@ -648,7 +660,19 @@ void SB_Drawer(void)
         if (SB_state == -1)
         {
             RefreshBackground(); // [crispy] for widescreen
-            V_DrawPatch(0, 158, PatchBARBACK);
+
+            // [crispy] support wide status bars with 0 offset
+            if (SHORT(PatchBARBACK->width) > ORIGWIDTH &&
+                    SHORT(PatchBARBACK->leftoffset) == 0)
+            {
+                V_DrawPatch((ORIGWIDTH - SHORT(PatchBARBACK->width)) / 2, 158,
+                        PatchBARBACK);
+            }
+            else
+            {
+                V_DrawPatch(0, 158, PatchBARBACK);
+            }
+
             if (players[consoleplayer].cheats & CF_GODMODE)
             {
                 V_DrawPatch(16, 167,
@@ -686,11 +710,16 @@ void SB_Drawer(void)
             SB_state = 1;
         }
     }
-    SB_PaletteFlash();
 
     // Flight icons
     if (CPlayer->powers[pw_flight])
     {
+        spinfly_x = 20 - WIDESCREENDELTA; // [crispy]
+
+        // [crispy] Move flight icon out of the way of stats widget.
+        // left_widget_w is 0 if stats widget is off.
+        spinfly_x += left_widget_w;
+
         if (CPlayer->powers[pw_flight] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_flight] & 16))
         {
@@ -699,13 +728,15 @@ void SB_Drawer(void)
             {
                 if (hitCenterFrame && (frame != 15 && frame != 0))
                 {
-                    V_DrawPatch(20, 17, W_CacheLumpNum(spinflylump + 15,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 17,
+                                W_CacheLumpNum(spinflylump + 15,
+                                                PU_CACHE));
                 }
                 else
                 {
-                    V_DrawPatch(20, 17, W_CacheLumpNum(spinflylump + frame,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 17,
+                                W_CacheLumpNum(spinflylump + frame,
+                                                PU_CACHE));
                     hitCenterFrame = false;
                 }
             }
@@ -713,14 +744,16 @@ void SB_Drawer(void)
             {
                 if (!hitCenterFrame && (frame != 15 && frame != 0))
                 {
-                    V_DrawPatch(20, 17, W_CacheLumpNum(spinflylump + frame,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 17,
+                                W_CacheLumpNum(spinflylump + frame,
+                                                PU_CACHE));
                     hitCenterFrame = false;
                 }
                 else
                 {
-                    V_DrawPatch(20, 17, W_CacheLumpNum(spinflylump + 15,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 17,
+                                W_CacheLumpNum(spinflylump + 15,
+                                                PU_CACHE));
                     hitCenterFrame = true;
                 }
             }
@@ -736,11 +769,17 @@ void SB_Drawer(void)
 
     if (CPlayer->powers[pw_weaponlevel2] && !CPlayer->chickenTics)
     {
+        spinbook_x = 300 + WIDESCREENDELTA; // [crispy]
+
+        // [crispy] Move tome icon out of the way of coordinates widget and fps
+        // counter. right_widget_w is 0 if those are off.
+        spinbook_x -= right_widget_w;
+
         if (CPlayer->powers[pw_weaponlevel2] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_weaponlevel2] & 16))
         {
             frame = (leveltime / 3) & 15;
-            V_DrawPatch(300, 17,
+            V_DrawPatch(spinbook_x, 17,
                         W_CacheLumpNum(spinbooklump + frame, PU_CACHE));
             BorderTopRefresh = true;
             UpdateState |= I_MESSAGES;
@@ -771,7 +810,9 @@ void SB_PaletteFlash(void)
 {
     static int sb_palette = 0;
     int palette;
+#ifndef CRISPY_TRUECOLOR
     byte *pal;
+#endif
 
     CPlayer = &players[consoleplayer];
 
@@ -800,8 +841,12 @@ void SB_PaletteFlash(void)
     if (palette != sb_palette)
     {
         sb_palette = palette;
+#ifndef CRISPY_TRUECOLOR
         pal = (byte *) W_CacheLumpNum(playpalette, PU_CACHE) + palette * 768;
         I_SetPalette(pal);
+#else
+        I_SetPalette(palette);
+#endif
     }
 }
 
@@ -1012,6 +1057,101 @@ void DrawFullScreenStuff(void)
     int temp;
 
     UpdateState |= I_FULLSCRN;
+    // [crispy] Crispy Hud
+    // TODO Do not always render, only if update needed
+    if(screenblocks == 12)
+    {
+        temp = CPlayer->mo->health;
+        if (temp > 0)
+        {
+            DrINumber(temp, 5 - WIDESCREENDELTA, 180);
+        }
+        else
+        {
+            DrINumber(0, 5 - WIDESCREENDELTA, 180);
+        }
+        // Ammo
+        temp = CPlayer->ammo[wpnlev1info[CPlayer->readyweapon].ammo];
+        if (temp && CPlayer->readyweapon > 0 && CPlayer->readyweapon < 7)
+        {
+            V_DrawPatch(55 - WIDESCREENDELTA, 182,
+                        W_CacheLumpName(DEH_String(ammopic[CPlayer->readyweapon - 1]),
+                                        PU_CACHE));
+            DrINumber(temp, 53 - WIDESCREENDELTA, 172);
+        }
+        // Keys
+        if (CPlayer->keys[key_yellow])
+        {
+            V_DrawPatch(214 + WIDESCREENDELTA, 174, W_CacheLumpName(DEH_String("ykeyicon"), PU_CACHE));
+        }
+        if (CPlayer->keys[key_green])
+        {
+            V_DrawPatch(214 + WIDESCREENDELTA, 182, W_CacheLumpName(DEH_String("gkeyicon"), PU_CACHE));
+        }
+        if (CPlayer->keys[key_blue])
+        {
+            V_DrawPatch(214 + WIDESCREENDELTA, 190, W_CacheLumpName(DEH_String("bkeyicon"), PU_CACHE));
+        }
+        // Armor
+        DrINumber(CPlayer->armorpoints, 286 + WIDESCREENDELTA, 180);
+        if (deathmatch)
+        {
+            temp = 0;
+            for (i = 0; i < MAXPLAYERS; i++)
+            {
+                if (playeringame[i])
+                {
+                    temp += CPlayer->frags[i];
+                }
+            }
+            DrINumber(temp, 5 - WIDESCREENDELTA, 165);
+        }
+        if (!inventory)
+        {
+            if (ArtifactFlash)
+            {
+                temp = W_GetNumForName(DEH_String("useartia")) + ArtifactFlash - 1;
+                V_DrawPatch(243 + WIDESCREENDELTA, 171, W_CacheLumpNum(temp, PU_CACHE));
+                ArtifactFlash--;
+            }
+            else if (CPlayer->readyArtifact > 0)
+            {
+                patch = DEH_String(patcharti[CPlayer->readyArtifact]);
+                V_DrawPatch(240 + WIDESCREENDELTA, 170, W_CacheLumpName(patch, PU_CACHE));
+                DrSmallNumber(CPlayer->inventory[inv_ptr].count, 262 + WIDESCREENDELTA, 192);
+            }
+        }
+        else
+        {
+            x = inv_ptr - curpos;
+            for (i = 0; i < 7; i++)
+            {
+                V_DrawPatch(50 + i * 31, 170,
+                              W_CacheLumpName(DEH_String("ARTIBOX"), PU_CACHE));
+                if (CPlayer->inventorySlotNum > x + i
+                    && CPlayer->inventory[x + i].type != arti_none)
+                {
+                    patch = DEH_String(patcharti[CPlayer->inventory[x + i].type]);
+                    V_DrawPatch(50 + i * 31, 170,
+                                W_CacheLumpName(patch, PU_CACHE));
+                    DrSmallNumber(CPlayer->inventory[x + i].count, 69 + i * 31,
+                                  192);
+                }
+            }
+            V_DrawPatch(50 + curpos * 31, 199, PatchSELECTBOX);
+            if (x != 0)
+            {
+                V_DrawPatch(38, 169, !(leveltime & 4) ? PatchINVLFGEM1 :
+                            PatchINVLFGEM2);
+            }
+            if (CPlayer->inventorySlotNum - x > 7)
+            {
+                V_DrawPatch(269, 169, !(leveltime & 4) ?
+                            PatchINVRTGEM1 : PatchINVRTGEM2);
+            }
+        }
+        return;
+    }
     if (CPlayer->mo->health > 0)
     {
         DrBNumber(CPlayer->mo->health, 5, 180);
@@ -1037,7 +1177,7 @@ void DrawFullScreenStuff(void)
         if (CPlayer->readyArtifact > 0)
         {
             patch = DEH_String(patcharti[CPlayer->readyArtifact]);
-            V_DrawTLPatch(286, 170, W_CacheLumpName(DEH_String("ARTIBOX"), PU_CACHE));
+            V_DrawAltTLPatch(286, 170, W_CacheLumpName(DEH_String("ARTIBOX"), PU_CACHE));
             V_DrawPatch(286, 170, W_CacheLumpName(patch, PU_CACHE));
             DrSmallNumber(CPlayer->inventory[inv_ptr].count, 307, 192);
         }
@@ -1047,7 +1187,7 @@ void DrawFullScreenStuff(void)
         x = inv_ptr - curpos;
         for (i = 0; i < 7; i++)
         {
-            V_DrawTLPatch(50 + i * 31, 168,
+            V_DrawAltTLPatch(50 + i * 31, 168,
                           W_CacheLumpName(DEH_String("ARTIBOX"), PU_CACHE));
             if (CPlayer->inventorySlotNum > x + i
                 && CPlayer->inventory[x + i].type != arti_none)
@@ -1167,7 +1307,6 @@ static void CheatNoClipFunc(player_t * player, Cheat_t * cheat)
 static void CheatWeaponsFunc(player_t * player, Cheat_t * cheat)
 {
     int i;
-    //extern boolean *WeaponInShareware;
 
     NIGHTMARE_NETGAME_CHECK;
     player->armorpoints = 200;
@@ -1346,8 +1485,6 @@ static void CheatWarpFunc(player_t * player, Cheat_t * cheat)
 
 static void CheatChickenFunc(player_t * player, Cheat_t * cheat)
 {
-    extern boolean P_UndoPlayerChicken(player_t * player);
-
     NIGHTMARE_NETGAME_CHECK;
     if (player->chickenTics)
     {
@@ -1556,13 +1693,13 @@ static void CheatAddRemoveWpnFunc(player_t *player, Cheat_t *cheat)
 static void CheatSpecHitFunc(player_t *player, Cheat_t *cheat)
 {
     int i, speciallines = 0;
-    boolean origkeys[NUMKEYS];
+    boolean origkeys[NUM_KEY_TYPES];
     line_t dummy;
 
     NIGHTMARE_NETGAME_CHECK;
 
     // temporarily give all keys
-    for (i = 0; i < NUMKEYS; i++)
+    for (i = 0; i < NUM_KEY_TYPES; i++)
     {
         origkeys[i] = player->keys[i];
         player->keys[i] = true;
@@ -1600,7 +1737,7 @@ static void CheatSpecHitFunc(player_t *player, Cheat_t *cheat)
     }
 
     // restore original keys
-    for (i = 0; i < NUMKEYS; i++)
+    for (i = 0; i < NUM_KEY_TYPES; i++)
     {
         player->keys[i] = origkeys[i];
     }

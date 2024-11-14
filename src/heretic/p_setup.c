@@ -26,6 +26,7 @@
 #include "m_bbox.h"
 #include "p_local.h"
 #include "s_sound.h"
+#include "p_extnodes.h"
 
 void P_SpawnMapThing(mapthing_t * mthing);
 
@@ -61,6 +62,20 @@ byte *rejectmatrix;             // for fast sight rejection
 mapthing_t deathmatchstarts[10], *deathmatch_p;
 mapthing_t playerstarts[MAXPLAYERS];
 boolean playerstartsingame[MAXPLAYERS];
+
+// [crispy] recalculate seg offsets
+// adapted from prboom-plus/src/p_setup.c:474-482
+fixed_t GetOffset(vertex_t *v1, vertex_t *v2)
+{
+    fixed_t dx, dy;
+    fixed_t r;
+
+    dx = (v1->x - v2->x)>>FRACBITS;
+    dy = (v1->y - v2->y)>>FRACBITS;
+    r = (fixed_t)(sqrt(dx*dx + dy*dy))<<FRACBITS;
+
+    return r;
+}
 
 /*
 =================
@@ -124,17 +139,19 @@ void P_LoadSegs(int lump)
     li = segs;
     for (i = 0; i < numsegs; i++, li++, ml++)
     {
-        li->v1 = &vertexes[SHORT(ml->v1)];
-        li->v2 = &vertexes[SHORT(ml->v2)];
+        li->v1 = &vertexes[(unsigned short)SHORT(ml->v1)]; // [crispy] extended nodes
+        li->v2 = &vertexes[(unsigned short)SHORT(ml->v2)]; // [crispy] extended nodes
 
         li->angle = (SHORT(ml->angle)) << 16;
         li->offset = (SHORT(ml->offset)) << 16;
-        linedef = SHORT(ml->linedef);
+        linedef = (unsigned short)SHORT(ml->linedef); // [crispy] extended nodes
         ldef = &lines[linedef];
         li->linedef = ldef;
         side = SHORT(ml->side);
         li->sidedef = &sides[ldef->sidenum[side]];
         li->frontsector = sides[ldef->sidenum[side]].sector;
+        // [crispy] recalculate
+        li->offset = GetOffset(li->v1, (ml->side ? ldef->v2 : ldef->v1));
         if (ldef->flags & ML_TWOSIDED)
             li->backsector = sides[ldef->sidenum[side ^ 1]].sector;
         else
@@ -144,6 +161,64 @@ void P_LoadSegs(int lump)
     W_ReleaseLumpNum(lump);
 }
 
+// [crispy] fix long wall wobble
+
+static angle_t anglediff(angle_t a, angle_t b)
+{
+    if (b > a)
+        return anglediff(b, a);
+
+    if (a - b < ANG180)
+        return a - b;
+    else // [crispy] wrap around
+        return b - a;
+}
+
+void P_SegLengths(boolean contrast_only)
+{
+    int i;
+    const int rightangle = abs(finesine[(ANG60/2) >> ANGLETOFINESHIFT]);
+
+    for (i = 0; i < numsegs; i++)
+    {
+        seg_t *const li = &segs[i];
+        int64_t dx, dy;
+
+        dx = li->v2->r_x - li->v1->r_x;
+        dy = li->v2->r_y - li->v1->r_y;
+
+        if (!contrast_only)
+        {
+        li->length = (uint32_t)(sqrt((double)dx * dx + (double)dy * dy) / 2);
+
+        // [crispy] re-calculate angle used for rendering
+        viewx = li->v1->r_x;
+        viewy = li->v1->r_y;
+        li->r_angle = R_PointToAngleCrispy(li->v2->r_x, li->v2->r_y);
+        // [crispy] more than just a little adjustment?
+        // back to the original angle then
+        if (anglediff(li->r_angle, li->angle) > ANG60/2)
+        {
+            li->r_angle = li->angle;
+        }
+        }
+
+        // [crispy] smoother fake contrast
+        if (!dy)
+            li->fakecontrast = -LIGHTBRIGHT;
+        else
+        if (abs(finesine[li->r_angle >> ANGLETOFINESHIFT]) < rightangle)
+            li->fakecontrast = -LIGHTBRIGHT / 2;
+        else
+        if (!dx)
+            li->fakecontrast = LIGHTBRIGHT;
+        else
+        if (abs(finecosine[li->r_angle >> ANGLETOFINESHIFT]) < rightangle)
+            li->fakecontrast = LIGHTBRIGHT / 2;
+        else
+            li->fakecontrast = 0;
+    }
+}
 
 /*
 =================
@@ -169,8 +244,8 @@ void P_LoadSubsectors(int lump)
     ss = subsectors;
     for (i = 0; i < numsubsectors; i++, ss++, ms++)
     {
-        ss->numlines = SHORT(ms->numsegs);
-        ss->firstline = SHORT(ms->firstseg);
+        ss->numlines = (unsigned short)SHORT(ms->numsegs); // [crispy] extended nodes
+        ss->firstline = (unsigned short)SHORT(ms->firstseg); // [crispy] extended nodes
     }
 
     W_ReleaseLumpNum(lump);
@@ -209,6 +284,9 @@ void P_LoadSectors(int lump)
         ss->special = SHORT(ms->special);
         ss->tag = SHORT(ms->tag);
         ss->thinglist = NULL;
+
+        // [crispy] WiggleFix: [kb] for R_FixWiggle()
+        ss->cachedheight = 0;
 
         // [AM] Sector interpolation.  Even if we're
         //      not running uncapped, the renderer still
@@ -254,7 +332,23 @@ void P_LoadNodes(int lump)
         no->dy = SHORT(mn->dy) << FRACBITS;
         for (j = 0; j < 2; j++)
         {
-            no->children[j] = SHORT(mn->children[j]);
+            no->children[j] = (unsigned short)SHORT(mn->children[j]); // [crispy] extended nodes
+
+            // [crispy] add support for extended nodes
+            // from prboom-plus/src/p_setup.c:937-957
+            if (no->children[j] == NO_INDEX)
+                no->children[j] = -1;
+            else
+            if (no->children[j] & NF_SUBSECTOR_VANILLA)
+            {
+                no->children[j] &= ~NF_SUBSECTOR_VANILLA;
+
+                if (no->children[j] >= numsubsectors)
+                    no->children[j] = 0;
+
+                no->children[j] |= NF_SUBSECTOR;
+            }
+
             for (k = 0; k < 4; k++)
                 no->bbox[j][k] = SHORT(mn->bbox[j][k]) << FRACBITS;
         }
@@ -338,11 +432,11 @@ void P_LoadLineDefs(int lump)
     ld = lines;
     for (i = 0; i < numlines; i++, mld++, ld++)
     {
-        ld->flags = SHORT(mld->flags);
+        ld->flags = (unsigned short)SHORT(mld->flags); // [crispy] extended nodes
         ld->special = SHORT(mld->special);
         ld->tag = SHORT(mld->tag);
-        v1 = ld->v1 = &vertexes[SHORT(mld->v1)];
-        v2 = ld->v2 = &vertexes[SHORT(mld->v2)];
+        v1 = ld->v1 = &vertexes[(unsigned short)SHORT(mld->v1)]; // [crispy] extended nodes
+        v2 = ld->v2 = &vertexes[(unsigned short)SHORT(mld->v2)]; // [crispy] extended nodes
         ld->dx = v2->x - v1->x;
         ld->dy = v2->y - v1->y;
         if (!ld->dx)
@@ -379,11 +473,11 @@ void P_LoadLineDefs(int lump)
         }
         ld->sidenum[0] = SHORT(mld->sidenum[0]);
         ld->sidenum[1] = SHORT(mld->sidenum[1]);
-        if (ld->sidenum[0] != -1)
+        if (ld->sidenum[0] != NO_INDEX) // [crispy] extended nodes
             ld->frontsector = sides[ld->sidenum[0]].sector;
         else
             ld->frontsector = 0;
-        if (ld->sidenum[1] != -1)
+        if (ld->sidenum[1] != NO_INDEX) // [crispy] extended nodes
             ld->backsector = sides[ld->sidenum[1]].sector;
         else
             ld->backsector = 0;
@@ -440,15 +534,20 @@ void P_LoadSideDefs(int lump)
 =================
 */
 
-void P_LoadBlockMap(int lump)
+boolean P_LoadBlockMap(int lump)
 {
     int i, count;
     int lumplen;
     short *wadblockmaplump;
 
-    lumplen = W_LumpLength(lump);
-
-    count = lumplen / 2; // [crispy] remove BLOCKMAP limit
+    // [crispy] (re-)create BLOCKMAP if necessary
+    if (M_CheckParm("-blockmap") ||
+        lump >= numlumps ||
+        (lumplen = W_LumpLength(lump)) < 8 ||
+        (count = lumplen / 2) >= 0x10000)
+    {
+        return false;
+    }
 
     // [crispy] remove BLOCKMAP limit
     wadblockmaplump = Z_Malloc(lumplen, PU_LEVEL, NULL);
@@ -481,6 +580,9 @@ void P_LoadBlockMap(int lump)
     count = sizeof(*blocklinks) * bmapwidth * bmapheight;
     blocklinks = Z_Malloc(count, PU_LEVEL, 0);
     memset(blocklinks, 0, count);
+
+    // [crispy] (re-)create BLOCKMAP if necessary
+    return true;
 }
 
 
@@ -493,6 +595,8 @@ void P_LoadBlockMap(int lump)
 =
 = Builds sector line lists and subsector sector numbers
 = Finds block bounding boxes for sectors
+= [crispy] updated old Doom 1.2 code with actual implementation of P_GroupLines
+= from Chocolate Doom for better handling and faster loading of complex levels
 =================
 */
 
@@ -531,23 +635,51 @@ void P_GroupLines(void)
 
 // build line tables for each sector    
     linebuffer = Z_Malloc(total * sizeof(line_t *), PU_LEVEL, 0);
+    for (i = 0; i < numsectors; ++i)
+    {
+        // Assign the line buffer for this sector
+        sectors[i].lines = linebuffer;
+        linebuffer += sectors[i].linecount;
+
+        // Reset linecount to zero so in the next stage we can count
+        // lines into the list.
+        sectors[i].linecount = 0;
+    }
+
+// [crispy] assign lines to sectors
+    for (i = 0; i < numlines; ++i)
+    { 
+        li = &lines[i];
+
+        if (li->frontsector != NULL)
+        {
+            sector = li->frontsector;
+
+            sector->lines[sector->linecount] = li;
+            ++sector->linecount;
+        }
+
+        if (li->backsector != NULL && li->frontsector != li->backsector)
+        {
+            sector = li->backsector;
+
+            sector->lines[sector->linecount] = li;
+            ++sector->linecount;
+        }
+    }
+
+// [crispy] generate bounding boxes for sectors
     sector = sectors;
     for (i = 0; i < numsectors; i++, sector++)
     {
         M_ClearBox(bbox);
-        sector->lines = linebuffer;
-        li = lines;
-        for (j = 0; j < numlines; j++, li++)
+        for (j = 0; j < sector->linecount; j++)
         {
-            if (li->frontsector == sector || li->backsector == sector)
-            {
-                *linebuffer++ = li;
+                li = sector->lines[j];
+        
                 M_AddToBox(bbox, li->v1->x, li->v1->y);
                 M_AddToBox(bbox, li->v2->x, li->v2->y);
-            }
         }
-        if (linebuffer - sector->lines != sector->linecount)
-            I_Error("P_GroupLines: miscounted");
 
         // set the degenmobj_t to the middle of the bounding box
         sector->soundorg.x = (bbox[BOXRIGHT] + bbox[BOXLEFT]) / 2;
@@ -628,6 +760,8 @@ static void P_RemoveSlimeTrails(void)
     }
 }
 
+lumpinfo_t *maplumpinfo;
+
 /*
 =================
 =
@@ -643,6 +777,8 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
     char lumpname[9];
     int lumpnum;
     mobj_t *mobj;
+    boolean crispy_validblockmap;
+    mapformat_t crispy_mapformat;
 
     totalkills = totalitems = totalsecret = 0;
     for (i = 0; i < MAXPLAYERS; i++)
@@ -679,22 +815,50 @@ void P_SetupLevel(int episode, int map, int playermask, skill_t skill)
 
     lumpnum = W_GetNumForName(lumpname);
 
+    // [crispy] check and log map and nodes format
+    crispy_mapformat = P_CheckMapFormat(lumpnum);
+
+    maplumpinfo = lumpinfo[lumpnum];
+
 // note: most of this ordering is important     
-    P_LoadBlockMap(lumpnum + ML_BLOCKMAP);
+    crispy_validblockmap = P_LoadBlockMap(lumpnum + ML_BLOCKMAP); // [crispy] (re-)create BLOCKMAP if necessary
     P_LoadVertexes(lumpnum + ML_VERTEXES);
     P_LoadSectors(lumpnum + ML_SECTORS);
     P_LoadSideDefs(lumpnum + ML_SIDEDEFS);
 
     P_LoadLineDefs(lumpnum + ML_LINEDEFS);
+
+    // [crispy] (re-)create BLOCKMAP if necessary
+    if (!crispy_validblockmap)
+    {
+        P_CreateBlockMap();
+    }
+
+    if (crispy_mapformat & (MFMT_ZDBSPX | MFMT_ZDBSPZ))
+    {
+        P_LoadNodes_ZDBSP(lumpnum + ML_NODES, crispy_mapformat & MFMT_ZDBSPZ);
+    }
+    else if (crispy_mapformat & MFMT_DEEPBSP)
+    {
+        P_LoadSubsectors_DeePBSP(lumpnum + ML_SSECTORS);
+        P_LoadNodes_DeePBSP(lumpnum + ML_NODES);
+        P_LoadSegs_DeePBSP(lumpnum + ML_SEGS);
+    }
+    else
+    {
     P_LoadSubsectors(lumpnum + ML_SSECTORS);
     P_LoadNodes(lumpnum + ML_NODES);
     P_LoadSegs(lumpnum + ML_SEGS);
+    }
 
     rejectmatrix = W_CacheLumpNum(lumpnum + ML_REJECT, PU_LEVEL);
     P_GroupLines();
 
     // [crispy] remove slime trails
     P_RemoveSlimeTrails();
+
+    // [crispy] fix long wall wobble
+    P_SegLengths(false);
 
     bodyqueslot = 0;
     deathmatch_p = deathmatchstarts;

@@ -61,7 +61,7 @@ byte *tranmap = NULL;
 byte *dp_translation = NULL;
 boolean dp_translucent = false;
 #ifdef CRISPY_TRUECOLOR
-extern pixel_t *colormaps;
+extern pixel_t *pal_color;
 #endif
 
 // villsa [STRIFE] Blending table used for Strife
@@ -170,29 +170,60 @@ static const inline pixel_t drawpatchpx00 (const pixel_t dest, const pixel_t sou
 #ifndef CRISPY_TRUECOLOR
 {return source;}
 #else
-{return colormaps[source];}
+{return pal_color[source];}
 #endif
 // (2) color-translated, opaque patch
 static const inline pixel_t drawpatchpx01 (const pixel_t dest, const pixel_t source)
 #ifndef CRISPY_TRUECOLOR
 {return dp_translation[source];}
 #else
-{return colormaps[dp_translation[source]];}
+{return pal_color[dp_translation[source]];}
 #endif
 // (3) normal, translucent patch
 static const inline pixel_t drawpatchpx10 (const pixel_t dest, const pixel_t source)
 #ifndef CRISPY_TRUECOLOR
 {return tranmap[(dest<<8)+source];}
 #else
-{return I_BlendOver(dest, colormaps[source]);}
+{return I_BlendOverTranmap(dest, pal_color[source]);}
 #endif
 // (4) color-translated, translucent patch
 static const inline pixel_t drawpatchpx11 (const pixel_t dest, const pixel_t source)
 #ifndef CRISPY_TRUECOLOR
 {return tranmap[(dest<<8)+dp_translation[source]];}
 #else
-{return I_BlendOver(dest, colormaps[dp_translation[source]]);}
+{return I_BlendOverTranmap(dest, pal_color[dp_translation[source]]);}
 #endif
+
+// [crispy] TINTTAB rendering functions:
+// V_DrawShadowedPatch (shadow only)
+static const inline pixel_t drawshadow (const pixel_t dest, const pixel_t source)
+#ifndef CRISPY_TRUECOLOR
+{return tinttable[(dest<<8)];}
+#else
+{return I_BlendDark(dest, 0xa0);} // 160 (62.75%) of 256 full translucency
+#endif
+// V_DrawTLPatch (translucent patch, no coloring or color-translation are used)
+static const inline pixel_t drawtinttab (const pixel_t dest, const pixel_t source)
+#ifndef CRISPY_TRUECOLOR
+{return tinttable[dest+(source<<8)];}
+#else
+{return I_BlendOverTinttab(dest, pal_color[source]);}
+#endif
+// V_DrawAltTLPatch (translucent patch, no coloring or color-translation are used)
+static const inline pixel_t drawalttinttab (const pixel_t dest, const pixel_t source)
+#ifndef CRISPY_TRUECOLOR
+{return tinttable[(dest<<8)+source];}
+#else
+{return I_BlendOverAltTinttab(dest, pal_color[source]);}
+#endif
+// V_DrawXlaPatch (translucent patch, no coloring or color-translation are used)
+static const inline pixel_t drawxlatab (const pixel_t dest, const pixel_t source)
+#ifndef CRISPY_TRUECOLOR
+{return xlatab[dest+(source<<8)];}
+#else
+{return I_BlendOverXlatab(dest, pal_color[source]);}
+#endif
+
 // [crispy] array of function pointers holding the different rendering functions
 typedef const pixel_t drawpatchpx_t (const pixel_t dest, const pixel_t source);
 static drawpatchpx_t *const drawpatchpx_a[2][2] = {{drawpatchpx11, drawpatchpx10}, {drawpatchpx01, drawpatchpx00}};
@@ -216,12 +247,14 @@ void V_DrawPatch(int x, int y, patch_t *patch)
     x -= SHORT(patch->leftoffset);
     x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
 
+/*
     // haleyjd 08/28/10: Strife needs silent error checking here.
     if(patchclip_callback)
     {
         if(!patchclip_callback(patch, x, y))
             return;
     }
+*/
 
 #ifdef RANGECHECK_NOTHANKS
     if (x < 0
@@ -309,14 +342,24 @@ void V_DrawPatch(int x, int y, patch_t *patch)
 void V_DrawPatchFullScreen(patch_t *patch, boolean flipped)
 {
     int x = ((SCREENWIDTH >> crispy->hires) - SHORT(patch->width)) / 2 - WIDESCREENDELTA;
+    static int black = -1;
 
     patch->leftoffset = 0;
     patch->topoffset = 0;
 
+    if (black == -1)
+    {
+#ifndef CRISPY_TRUECOLOR
+        black = I_GetPaletteIndex(0x00, 0x00, 0x00);
+#else
+        black = I_MapRGB(0x00, 0x00, 0x00);
+#endif
+    }
+
     // [crispy] fill pillarboxes in widescreen mode
     if (SCREENWIDTH != NONWIDEWIDTH)
     {
-        V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, 0);
+        V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, black);
     }
 
     if (flipped)
@@ -349,12 +392,14 @@ void V_DrawPatchFlipped(int x, int y, patch_t *patch)
     x -= SHORT(patch->leftoffset); 
     x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
 
+/*
     // haleyjd 08/28/10: Strife needs silent error checking here.
     if(patchclip_callback)
     {
         if(!patchclip_callback(patch, x, y))
             return;
     }
+*/
 
 #ifdef RANGECHECK_NOTHANKS
     if (x < 0
@@ -438,7 +483,7 @@ void V_DrawPatchFlipped(int x, int y, patch_t *patch)
 #ifndef CRISPY_TRUECOLOR
                     *dest = source[srccol >> FRACBITS];
 #else
-                    *dest = colormaps[source[srccol >> FRACBITS]];
+                    *dest = pal_color[source[srccol >> FRACBITS]];
 #endif
                 }
                 srccol += dyi;
@@ -475,6 +520,9 @@ void V_DrawTLPatch(int x, int y, patch_t * patch)
     byte *source;
     int w;
 
+    // [crispy] translucent patch, no coloring or color-translation are used
+    drawpatchpx_t *const drawpatchpx = drawtinttab;
+
     y -= SHORT(patch->topoffset);
     x -= SHORT(patch->leftoffset);
     x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
@@ -506,7 +554,7 @@ void V_DrawTLPatch(int x, int y, patch_t * patch)
 
             while (count--)
             {
-                *dest = tinttable[((*dest) << 8) + source[srccol >> FRACBITS]];
+                *dest = drawpatchpx(*dest, source[srccol >> FRACBITS]);
                 srccol += dyi;
                 dest += SCREENWIDTH;
             }
@@ -529,14 +577,20 @@ void V_DrawXlaPatch(int x, int y, patch_t * patch)
     byte *source;
     int w;
 
+    // [crispy] translucent patch, no coloring or color-translation are used
+    drawpatchpx_t *const drawpatchpx = drawxlatab;
+
     y -= SHORT(patch->topoffset);
     x -= SHORT(patch->leftoffset);
+    x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
 
+/*
     if(patchclip_callback)
     {
         if(!patchclip_callback(patch, x, y))
             return;
     }
+*/
 
     col = 0;
     desttop = dest_screen + ((y * dy) >> FRACBITS) * SCREENWIDTH + ((x * dx) >> FRACBITS);
@@ -557,7 +611,7 @@ void V_DrawXlaPatch(int x, int y, patch_t * patch)
 
             while(count--)
             {
-                *dest = xlatab[*dest + (source[srccol >> FRACBITS] << 8)];
+                *dest = drawpatchpx(*dest, source[srccol >> FRACBITS]);
                 srccol += dyi;
                 dest += SCREENWIDTH;
             }
@@ -580,13 +634,17 @@ void V_DrawAltTLPatch(int x, int y, patch_t * patch)
     byte *source;
     int w;
 
+    // [crispy] translucent patch, no coloring or color-translation are used
+    drawpatchpx_t *const drawpatchpx = drawalttinttab;
+
     y -= SHORT(patch->topoffset);
     x -= SHORT(patch->leftoffset);
+    x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
 
     if (x < 0
-     || x + SHORT(patch->width) > ORIGWIDTH
+     || x + SHORT(patch->width) > (SCREENWIDTH >> crispy->hires)
      || y < 0
-     || y + SHORT(patch->height) > ORIGHEIGHT)
+     || y + SHORT(patch->height) > (SCREENHEIGHT >> crispy->hires))
     {
         I_Error("Bad V_DrawAltTLPatch");
     }
@@ -610,7 +668,7 @@ void V_DrawAltTLPatch(int x, int y, patch_t * patch)
 
             while (count--)
             {
-                *dest = tinttable[((*dest) << 8) + source[srccol >> FRACBITS]];
+                *dest = drawpatchpx(*dest, source[srccol >> FRACBITS]);
                 srccol += dyi;
                 dest += SCREENWIDTH;
             }
@@ -633,6 +691,11 @@ void V_DrawShadowedPatch(int x, int y, patch_t *patch)
     byte *source;
     pixel_t *desttop2, *dest2;
     int w;
+
+    // [crispy] four different rendering functions
+    drawpatchpx_t *const drawpatchpx = drawpatchpx_a[!dp_translucent][!dp_translation];
+    // [crispy] shadow, no coloring or color-translation are used
+    drawpatchpx_t *const drawpatchpx2 = drawshadow;
 
     y -= SHORT(patch->topoffset);
     x -= SHORT(patch->leftoffset);
@@ -667,9 +730,9 @@ void V_DrawShadowedPatch(int x, int y, patch_t *patch)
 
             while (count--)
             {
-                *dest2 = tinttable[((*dest2) << 8)];
+                *dest2 = drawpatchpx2(*dest2, source[srccol >> FRACBITS]);
                 dest2 += SCREENWIDTH;
-                *dest = source[srccol >> FRACBITS];
+                *dest = drawpatchpx(*dest, source[srccol >> FRACBITS]);
                 srccol += dyi;
                 dest += SCREENWIDTH;
 
@@ -730,16 +793,19 @@ void V_DrawBlock(int x, int y, int width, int height, pixel_t *src)
     } 
 } 
 
-void V_DrawScaledBlock(int x, int y, int width, int height, pixel_t *src)
+// [crispy] scaled version of V_DrawBlock()
+void V_DrawScaledBlock(int x, int y, int width, int height, byte *src)
 {
     pixel_t *dest;
     int i, j;
 
+    x += WIDESCREENDELTA; // [crispy] horizontal widescreen offset
+
 #ifdef RANGECHECK
     if (x < 0
-     || x + width > ORIGWIDTH
+     || x + width > SCREENWIDTH
      || y < 0
-     || y + height > ORIGHEIGHT)
+     || y + height > SCREENWIDTH)
     {
 	I_Error ("Bad V_DrawScaledBlock");
     }
@@ -753,7 +819,11 @@ void V_DrawScaledBlock(int x, int y, int width, int height, pixel_t *src)
     {
         for (j = 0; j < (width << crispy->hires); j++)
         {
+#ifndef CRISPY_TRUECOLOR
             *(dest + i * SCREENWIDTH + j) = *(src + (i >> crispy->hires) * width + (j >> crispy->hires));
+#else
+            *(dest + i * SCREENWIDTH + j) = pal_color[*(src + (i >> crispy->hires) * width + (j >> crispy->hires))];
+#endif
         }
     }
 }
@@ -822,7 +892,7 @@ void V_DrawBox(int x, int y, int w, int h, int c)
 // to the screen)
 //
 
-void V_CopyScaledBuffer(pixel_t *dest, pixel_t *src, size_t size)
+void V_CopyScaledBuffer(pixel_t *dest, byte *src, size_t size)
 {
     int i, j, index;
 
@@ -860,7 +930,11 @@ void V_CopyScaledBuffer(pixel_t *dest, pixel_t *src, size_t size)
         {
             for (j = 0; j <= crispy->hires; j++)
             {
+#ifndef CRISPY_TRUECOLOR
                 *(dest + index - (j * SCREENWIDTH) - i) = *(src + size);
+#else
+                *(dest + index - (j * SCREENWIDTH) - i) = pal_color[src[size]];
+#endif
             }
         }
         if (size % ORIGWIDTH == 0)
@@ -872,7 +946,7 @@ void V_CopyScaledBuffer(pixel_t *dest, pixel_t *src, size_t size)
     }
 }
  
-void V_DrawRawScreen(pixel_t *raw)
+void V_DrawRawScreen(byte *raw)
 {
     V_CopyScaledBuffer(dest_screen, raw, ORIGWIDTH * ORIGHEIGHT);
 }
@@ -888,7 +962,7 @@ void V_DrawFullscreenRawOrPatch(lumpindex_t index)
 
     if (W_LumpLength(index) == ORIGWIDTH * ORIGHEIGHT)
     {
-        V_DrawRawScreen((pixel_t*)patch);
+        V_DrawRawScreen((byte*)patch);
     }
     else if ((SHORT(patch->height) == 200) && (SHORT(patch->width) >= 320))
     {
@@ -899,6 +973,27 @@ void V_DrawFullscreenRawOrPatch(lumpindex_t index)
         I_Error("Invalid fullscreen graphic.");
     }
 }
+
+// [crispy] Unified function of flat filling. Used for intermission
+// and finale screens, view border and status bar's wide screen mode.
+void V_FillFlat(int y_start, int y_stop, int x_start, int x_stop,
+                const byte *src, pixel_t *dest)
+{
+    int x, y;
+
+    for (y = y_start; y < y_stop; y++)
+    {
+        for (x = x_start; x < x_stop; x++)
+        {
+#ifndef CRISPY_TRUECOLOR
+            *dest++ = src[((y & 63) * 64) + (x & 63)];
+#else
+            *dest++ = pal_color[src[((y & 63) * 64) + (x & 63)]];
+#endif
+        }
+    }
+}
+
 //
 // V_Init
 // 
@@ -1066,7 +1161,7 @@ void WritePNGfile(char *filename, pixel_t *data,
     }
 */
 
-    handle = fopen(filename, "wb");
+    handle = M_fopen(filename, "wb");
     if (!handle)
     {
         return;
@@ -1176,7 +1271,6 @@ void V_ScreenShot(const char *format)
     // find a file name to save it to
 
 #ifdef HAVE_LIBPNG
-    extern int png_screenshots;
     if (png_screenshots)
     {
         ext = "png";
@@ -1331,7 +1425,6 @@ static void DrawNonAcceleratingBox(int speed)
 
 void V_DrawMouseSpeedBox(int speed)
 {
-    extern int usemouse;
     int bgcolor, bordercolor, black;
 
     // If the mouse is turned off, don't draw the box at all.

@@ -80,6 +80,8 @@
 
 #include "d_main.h"
 
+#include "strife_icon.c"
+
 //
 // D-DoomLoop()
 // Not a globally visible function,
@@ -112,12 +114,6 @@ boolean         randomparm;     // [STRIFE] haleyjd 20130915: checkparm of -rand
 boolean         showintro = true;   // [STRIFE] checkparm of -nograph, disables intro
 
 
-//extern int soundVolume;
-//extern  int	sfxVolume;
-//extern  int	musicVolume;
-
-extern  boolean	inhelpscreens;
-
 skill_t		startskill;
 int             startepisode;
 int		startmap;
@@ -141,10 +137,7 @@ boolean         isdemoversion;
 //boolean         storedemo;
 
 
-char		wadfile[1024];          // primary wad file
-char		mapdir[1024];           // directory of development maps
-
-int             show_endoom = 0;
+int             show_endoom = 1;
 int             show_diskicon = 1;
 int             graphical_startup = 0;
 static boolean  using_text_startup;
@@ -160,6 +153,9 @@ static int comport = 0;
 
 // fraggle 06/03/11 [STRIFE]: Multiplayer nickname?
 char *nickname = NULL;
+
+// [crispy] track screen wipe
+boolean screenwipe;
 
 void D_ConnectNetGame(void);
 void D_CheckNetGame(void);
@@ -203,9 +199,6 @@ void D_ProcessEvents (void)
 // * 20110206: Start wipegamestate at GS_UNKNOWN (STRIFE-TODO: rename?)
 //
 gamestate_t     wipegamestate = GS_UNKNOWN;
-extern  boolean setsizeneeded;
-//extern  int             showMessages; [STRIFE] no such variable
-void R_ExecuteSetViewSize (void);
 
 void D_Display (void)
 {
@@ -229,6 +222,13 @@ void D_Display (void)
 
     redrawsbar = false;
     
+    if (crispy->uncapped)
+    {
+        I_StartDisplay();
+        G_FastResponder();
+        G_PrepTiccmd();
+    }
+
     // change the view size if needed
     if (setsizeneeded)
     {
@@ -240,6 +240,7 @@ void D_Display (void)
     // save the current screen if about to wipe
     if (gamestate != wipegamestate)
     {
+        screenwipe = true; // [crispy]
         wipe = true;
         wipe_StartScreen(0, 0, SCREENWIDTH, SCREENHEIGHT);
     }
@@ -255,15 +256,19 @@ void D_Display (void)
     case GS_LEVEL:
         if (!gametic)
             break;
-        if (automapactive)
+        if (automapactive && !crispy->automapoverlay)
+        {
+            // [crispy] update automap while playing
+            R_RenderPlayerView (&players[displayplayer]);
             AM_Drawer ();
-        if (wipe || (viewheight != (200 <<crispy->hires) && fullscreen) )
+        }
+        if (wipe || (viewheight != SCREENHEIGHT && fullscreen) )
             redrawsbar = true;
         // haleyjd 08/29/10: [STRIFE] Always redraw sbar if menu is/was active
         if (menuactivestate || (inhelpscreensstate && !inhelpscreens))
             redrawsbar = true;              // just put away the help screen
-        ST_Drawer (viewheight == (200 << crispy->hires), redrawsbar );
-        fullscreen = viewheight == (200 << crispy->hires);
+        ST_Drawer (viewheight == SCREENHEIGHT, redrawsbar );
+        fullscreen = viewheight == SCREENHEIGHT;
         break;
       
      // haleyjd 08/23/2010: [STRIFE] No intermission
@@ -289,12 +294,16 @@ void D_Display (void)
     I_UpdateNoBlit ();
 
     // draw the view directly
-    if (gamestate == GS_LEVEL && !automapactive && gametic)
+    if (gamestate == GS_LEVEL && (!automapactive || crispy->automapoverlay) && gametic)
         R_RenderPlayerView (&players[displayplayer]);
 
     // clean up border stuff
     if (gamestate != oldgamestate && gamestate != GS_LEVEL)
+#ifndef CRISPY_TRUECOLOR
         I_SetPalette (W_CacheLumpName (DEH_String("PLAYPAL"),PU_CACHE));
+#else
+        I_SetPalette (0);
+#endif
 
     // see if the border needs to be initially drawn
     if (gamestate == GS_LEVEL && oldgamestate != GS_LEVEL)
@@ -304,7 +313,7 @@ void D_Display (void)
     }
 
     // see if the border needs to be updated to the screen
-    if (gamestate == GS_LEVEL && !automapactive && scaledviewwidth != (320 << crispy->hires))
+    if (gamestate == GS_LEVEL && (!automapactive || crispy->automapoverlay) && scaledviewwidth != SCREENWIDTH)
     {
         if (menuactive || menuactivestate || !viewactivestate)
         {
@@ -334,6 +343,17 @@ void D_Display (void)
     // haleyjd 20120208: [STRIFE] Rogue moved this down to below border drawing
     if (gamestate == GS_LEVEL && gametic)
     {
+        // [crispy] in automap overlay mode, draw the automap and HUD on top of
+        // everything else (except for Strife popups and exit screen)
+        if (automapactive && crispy->automapoverlay)
+        {
+            AM_Drawer ();
+
+            // [crispy] force redraw of status bar and border
+            viewactivestate = false;
+            inhelpscreensstate = true;
+        }
+
         HU_Drawer ();
         if(ST_DrawExternal()) 
             popupactivestate = true;
@@ -344,14 +364,26 @@ void D_Display (void)
         }
     }
 
+    // [crispy] draw neither pause pic nor menu when taking a clean screenshot
+    if (crispy->cleanscreenshot && !wipe)
+    {
+        I_FinishUpdate();
+        if (crispy->post_rendering_hook)
+        {
+            crispy->post_rendering_hook();
+            crispy->post_rendering_hook = NULL;
+        }
+        return;
+    }
+
     // draw pause pic
     if (paused)
     {
-        if (automapactive)
+        if (automapactive && !crispy->automapoverlay)
             y = 4;
         else
             y = (viewwindowy >> crispy->hires)+4;
-        V_DrawPatchDirect((viewwindowx >> crispy->hires) + ((scaledviewwidth >> crispy->hires) - 68) / 2, y,
+        V_DrawPatchDirect((viewwindowx >> crispy->hires) + ((scaledviewwidth >> crispy->hires) - 68) / 2 - WIDESCREENDELTA, y,
                           W_CacheLumpName (DEH_String("M_PAUSE"), PU_CACHE));
     }
 
@@ -365,6 +397,15 @@ void D_Display (void)
     if (!wipe)
     {
         I_FinishUpdate ();              // page flip or blit buffer
+
+        // [crispy] post-rendering function pointer to apply config changes
+        // that affect rendering and that are better applied after the current
+        // frame has finished rendering
+        if (crispy->post_rendering_hook)
+        {
+            crispy->post_rendering_hook();
+            crispy->post_rendering_hook = NULL;
+        }
         return;
     }
     
@@ -390,6 +431,8 @@ void D_Display (void)
         M_Drawer ();                            // menu is drawn even on top of wipes
         I_FinishUpdate ();                      // page flip or blit buffer
     } while (!done);
+
+    screenwipe = false; // [crispy]
 }
 
 //
@@ -418,6 +461,7 @@ void D_BindVariables(void)
 
     M_ApplyPlatformDefaults();
 
+    I_BindStrifeInputVariables(); // [crispy]
     I_BindInputVariables();
     I_BindVideoVariables();
     I_BindJoystickVariables();
@@ -453,6 +497,8 @@ void D_BindVariables(void)
     // * Added nickname, comport
 
     M_BindIntVariable("mouse_sensitivity",      &mouseSensitivity);
+    M_BindIntVariable("mouse_sensitivity_x2",   &mouseSensitivity_x2); // [crispy]
+    M_BindIntVariable("mouse_sensitivity_y",    &mouseSensitivity_y); // [crispy]
     M_BindIntVariable("sfx_volume",             &sfxVolume);
     M_BindIntVariable("music_volume",           &musicVolume);
     M_BindIntVariable("voice_volume",           &voiceVolume); 
@@ -480,6 +526,34 @@ void D_BindVariables(void)
         M_snprintf(buf, sizeof(buf), "chatmacro%i", i);
         M_BindStringVariable(buf, &chat_macros[i]);
     }
+
+    // [crispy] bind "crispness" config variables
+    M_BindIntVariable("crispy_automapoverlay",  &crispy->automapoverlay);
+    M_BindIntVariable("crispy_automaprotate",   &crispy->automaprotate);
+    M_BindIntVariable("crispy_bobfactor",       &crispy->bobfactor);
+    M_BindIntVariable("crispy_centerweapon",    &crispy->centerweapon);
+    M_BindIntVariable("crispy_crosshair",       &crispy->crosshair);
+    M_BindIntVariable("crispy_crosshairhealth", &crispy->crosshairhealth);
+    M_BindIntVariable("crispy_defaultskill",    &crispy->defaultskill);
+    M_BindIntVariable("crispy_fpslimit",        &crispy->fpslimit);
+    M_BindIntVariable("crispy_freelook",        &crispy->freelook_hh);
+    M_BindIntVariable("crispy_gamma",           &crispy->gamma);
+    M_BindIntVariable("crispy_hires",           &crispy->hires);
+    M_BindIntVariable("crispy_leveltime",       &crispy->leveltime);
+    M_BindIntVariable("crispy_mouselook",       &crispy->mouselook);
+    M_BindIntVariable("crispy_playercoords",    &crispy->playercoords);
+    M_BindIntVariable("crispy_smoothlight",     &crispy->smoothlight);
+    M_BindIntVariable("crispy_smoothmap",       &crispy->smoothmap);
+    M_BindIntVariable("crispy_smoothscaling",   &crispy->smoothscaling);
+    M_BindIntVariable("crispy_soundfix",        &crispy->soundfix);
+    M_BindIntVariable("crispy_soundfull",       &crispy->soundfull);
+    M_BindIntVariable("crispy_soundmono",       &crispy->soundmono);
+#ifdef CRISPY_TRUECOLOR
+    M_BindIntVariable("crispy_truecolor",       &crispy->truecolor);
+#endif
+    M_BindIntVariable("crispy_uncapped",        &crispy->uncapped);
+    M_BindIntVariable("crispy_vsync",           &crispy->vsync);
+    M_BindIntVariable("crispy_widescreen",      &crispy->widescreen);
 }
 
 //
@@ -512,6 +586,15 @@ static boolean D_StartupGrabCallback(void)
     return false;
 }
 
+// [crispy]
+void EnableLoadingDisk(void)
+{
+    if (show_diskicon)
+    {
+        V_EnableLoadingDisk("STDISK", SCREENWIDTH - LOADING_DISK_W, 3);
+    }
+}
+
 //
 //  D_DoomLoop
 //
@@ -528,13 +611,11 @@ void D_DoomLoop (void)
 
     if (!showintro)
     {
+        I_RegisterWindowIcon(strife_icon_data, strife_icon_w, strife_icon_h);
         I_InitGraphics();
     }
 
-    if (show_diskicon)
-    {
-        V_EnableLoadingDisk("STDISK", SCREENWIDTH - LOADING_DISK_W, 3);
-    }
+    EnableLoadingDisk(); // [crispy]
     I_SetGrabMouseCallback(D_GrabMouseCallback);
 
     V_RestoreBuffer();
@@ -549,13 +630,19 @@ void D_DoomLoop (void)
 
     while (1)
     {
+        static int oldgametic;
+
         // frame syncronous IO operations
         I_StartFrame ();
 
         // process one or more tics
         TryRunTics (); // will run at least one tic
 
-        S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
+        if (oldgametic < gametic)
+        {
+            S_UpdateSounds (players[consoleplayer].mo);// move positional sounds
+            oldgametic = gametic;
+        }
 
         // Update display, next frame, with current state.
         if (screenvisible)
@@ -594,7 +681,7 @@ void D_PageTicker (void)
 //
 void D_PageDrawer (void)
 {
-    V_DrawPatch (0, 0, W_CacheLumpName(pagename, PU_CACHE));
+    V_DrawPatchFullScreen (W_CacheLumpName(pagename, PU_CACHE), false);
 }
 
 
@@ -624,6 +711,9 @@ void D_DoAdvanceDemo (void)
     paused = false;
     gameaction = ga_nothing;
     
+    // [crispy] update the "singleplayer" variable
+    CheckCrispySingleplayer(!demorecording && !demoplayback && !netgame);
+
     // villsa 09/12/10: [STRIFE] converted pagetics to ticrate
     switch (demosequence)
     {
@@ -751,6 +841,7 @@ void D_StartTitle (void)
 {
     gamestate = GS_DEMOSCREEN;
     gameaction = ga_nothing;
+    automapactive = false; // [crispy]
     demosequence = -2;
     D_AdvanceDemo ();
 }
@@ -1018,7 +1109,7 @@ void PrintDehackedBanners(void)
     }
 }
 
-static struct 
+static const struct
 {
     const char *description;
     const char *cmdline;
@@ -1034,9 +1125,8 @@ static struct
 static void InitGameVersion(void)
 {
     int p;
-    int i;
 
-    // haleyjd: we support emulating either the 1.2 or the 1.31 versions of 
+    // haleyjd: we support emulating either the 1.2 or the 1.31 versions of
     // Strife, which are the most significant. 1.2 is the most mature version
     // that still has the single saveslot restriction, whereas 1.31 is the
     // final revision. The differences between the two are barely worth
@@ -1053,6 +1143,7 @@ static void InitGameVersion(void)
 
     if (p)
     {
+        int i;
         for (i=0; gameversions[i].description != NULL; ++i)
         {
             if (!strcmp(myargv[p+1], gameversions[i].cmdline))
@@ -1062,7 +1153,7 @@ static void InitGameVersion(void)
             }
         }
 
-        if (gameversions[i].description == NULL) 
+        if (gameversions[i].description == NULL)
         {
             printf("Supported game versions:\n");
 
@@ -1214,8 +1305,8 @@ boolean D_PatchClipCallback(patch_t *patch, int x, int y)
 {
     // note that offsets were already accounted for in V_DrawPatch
     return (x >= 0 && y >= 0 
-            && x + SHORT(patch->width) <= ORIGWIDTH 
-            && y + SHORT(patch->height) <= ORIGHEIGHT);
+            && x + SHORT(patch->width) <= (SCREENWIDTH >> crispy->hires)
+            && y + SHORT(patch->height) <= (SCREENHEIGHT >> crispy->hires));
 }
 
 //
@@ -1272,6 +1363,7 @@ static void D_IntroBackground(void)
 
     // Draw a 95-pixel rect from STARTUP0 starting at y=57 to (0,41) on the
     // screen (this was a memcpy directly to 0xA3340 in low DOS memory)
+    // [crispy] use scaled function
     V_DrawScaledBlock(0, 41, 320, 95, rawgfx_startup0 + (320*57));
 }
 
@@ -1299,6 +1391,7 @@ static void D_InitIntroSequence(void)
         // In vanilla Strife, Mode 13h was initialized directly in D_DoomMain.
         // We have to be a little more courteous of the low-level code here.
         I_SetGrabMouseCallback(D_StartupGrabCallback);
+        I_RegisterWindowIcon(strife_icon_data, strife_icon_h, strife_icon_w);
         I_InitGraphics();
         V_RestoreBuffer(); // make the V_ routines work
 
@@ -1401,7 +1494,8 @@ static void D_DrawIntroSequence(void)
         // Draw the laser
         // Blitted 16 bytes for 16 rows starting at 705280 + laserpos
         // (705280 - 0xA0000) / 320 == 156
-        V_DrawBlock(laserpos, 156, 16, 16, rawgfx_startlz[laserpos % 2]);
+        // [crispy] use scaled function
+        V_DrawScaledBlock(laserpos, 156, 16, 16, rawgfx_startlz[laserpos % 2]);
 
         // Robot position
         robotpos = laserpos % 5 - 2;
@@ -1409,12 +1503,14 @@ static void D_DrawIntroSequence(void)
         // Draw the robot
         // Blitted 48 bytes for 48 rows starting at 699534 + (320*robotpos)
         // 699534 - 0xA0000 == 44174, which % 320 == 14, / 320 == 138
+        // [crispy] use scaled function
         V_DrawScaledBlock(14, 138 + robotpos, 48, 48, rawgfx_startbot);
 
         // Draw the peasant
         // Blitted 32 bytes for 64 rows starting at 699142
         // 699142 - 0xA0000 == 43782, which % 320 == 262, / 320 == 136
-        V_DrawBlock(262, 136, 32, 64, rawgfx_startp[laserpos % 4]);
+        // [crispy] use scaled function
+        V_DrawScaledBlock(262, 136, 32, 64, rawgfx_startp[laserpos % 4]);
 
         I_FinishUpdate();
     }
@@ -1481,6 +1577,8 @@ static void G_CheckDemoStatusAtExit (void)
 {
     G_CheckDemoStatus();
 }
+
+static const char *const loadparms[] = {"-file", "-merge", NULL}; // [crispy]
 
 //
 // D_DoomMain
@@ -1608,10 +1706,10 @@ void D_DoomMain (void)
     // @category obscure
     // @vanilla
     //
-    // Flip player gun sprites (broken).
+    // Flip player gun sprites.
     //
 
-    flipparm = M_CheckParm ("-flip");
+    flipparm = M_CheckParm("-flip") || M_CheckParm("-flipweapons"); // [crispy]
 
     //!
     // @category game
@@ -1642,7 +1740,6 @@ void D_DoomMain (void)
 
     //!
     // @category game
-    // @category mod
     //
     // Double ammo pickup rate. This option is not allowed when recording a
     // demo, playing back a demo or when starting a network game.
@@ -1714,8 +1811,6 @@ void D_DoomMain (void)
     if ( (p=M_CheckParm ("-turbo")) )
     {
         int     scale = 200;
-        extern int forwardmove[2];
-        extern int sidemove[2];
 
         if (p<myargc-1)
             scale = atoi (myargv[p+1]);
@@ -1740,6 +1835,9 @@ void D_DoomMain (void)
     M_SetConfigFilenames("strife.cfg", PROGRAM_PREFIX "strife.cfg");
     D_BindVariables();
     M_LoadDefaults();
+
+    // [crispy] show exit screen only if showing ENDOOM
+    show_exitscreen = show_endoom;
 
     // Save configuration at exit.
     I_AtExit(M_SaveDefaults, false);
@@ -1802,6 +1900,31 @@ void D_DoomMain (void)
 
     // Debug:
 //    W_PrintDirectory();
+
+    // [crispy] add wad files from autoload PWAD directories
+
+    if (!M_ParmExists("-noautoload") && gamemode != shareware)
+    {
+        int i;
+
+        for (i = 0; loadparms[i]; i++)
+        {
+            int p;
+            p = M_CheckParmWithArgs(loadparms[i], 1);
+            if (p)
+            {
+                while (++p != myargc && myargv[p][0] != '-')
+                {
+                    char *autoload_dir;
+                    if ((autoload_dir = M_GetAutoloadDir(M_BaseName(myargv[p]), false)))
+                    {
+                        W_AutoLoadWADs(autoload_dir);
+                        free(autoload_dir);
+                    }
+                }
+            }
+        }
+    }
 
     //!
     // @arg <demo>
@@ -1868,6 +1991,31 @@ void D_DoomMain (void)
 
     W_GenerateHashTable();
 
+    // [crispy] process .deh files from PWADs autoload directories
+
+    if (!M_ParmExists("-noautoload") && gamemode != shareware)
+    {
+        int i;
+
+        for (i = 0; loadparms[i]; i++)
+        {
+            int p;
+            p = M_CheckParmWithArgs(loadparms[i], 1);
+            if (p)
+            {
+                while (++p != myargc && myargv[p][0] != '-')
+                {
+                    char *autoload_dir;
+                    if ((autoload_dir = M_GetAutoloadDir(M_BaseName(myargv[p]), false)))
+                    {
+                        DEH_AutoLoadPatches(autoload_dir);
+                        free(autoload_dir);
+                    }
+                }
+            }
+        }
+    }
+
     InitGameVersion();
     InitTitleString();
     D_SetGameDescription();
@@ -1877,7 +2025,7 @@ void D_DoomMain (void)
     // fraggle 20130405: I_InitTimer is needed here for the netgame
     // startup. Start low-level sound init here too.
     I_InitTimer();
-    I_InitSound(true);
+    I_InitSound(strife);
     I_InitMusic();
 
     if(devparm) // [STRIFE]
@@ -1889,6 +2037,11 @@ void D_DoomMain (void)
     M_CreateSaveDirs(savegamedir);
 
     I_GraphicsCheckCommandLine();
+
+    // [crispy] Initialize and generate gamma-correction levels and
+    // colormaps/pal_color arrays before introduction sequence.
+    I_SetGammaTable();
+    R_InitColormaps();
 
     // haleyjd 20110206 [STRIFE] Startup the introduction sequence
     D_InitIntroSequence();
@@ -1929,7 +2082,10 @@ void D_DoomMain (void)
     D_IntroTick(); // [STRIFE]
     
     // get skill / episode / map from parms
-    startskill = sk_easy; // [STRIFE]: inits to sk_easy
+
+    // [crispy] set defaultskill (Strife default is SKILL_HNTR)
+    startskill = (crispy->defaultskill + SKILL_HNTR) % NUM_SKILLS;
+
     startepisode = 1;
     startmap = 1;
     autostart = false;
@@ -2062,6 +2218,8 @@ void D_DoomMain (void)
         startloadgame = -1;
     }
 
+// [crispy] disable meaningless warning, we always use "-merge" anyway
+#if 0
     if (W_CheckNumForName("SS_START") >= 0
      || W_CheckNumForName("FF_END") >= 0)
     {
@@ -2070,6 +2228,7 @@ void D_DoomMain (void)
                " floor textures.  You may want to use the '-merge' command\n"
                " line option instead of '-file'.\n");
     }
+#endif
 
     I_PrintStartupBanner(gamedescription);
     PrintDehackedBanners();

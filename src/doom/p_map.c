@@ -916,10 +916,6 @@ fixed_t		attackrange;
 
 fixed_t		aimslope;
 
-// slopes to top and bottom of target
-extern fixed_t	topslope;
-extern fixed_t	bottomslope;	
-
 extern degenmobj_t *laserspot;
 
 //
@@ -1105,7 +1101,7 @@ boolean PTR_ShootTraverse (intercept_t* in)
 	    }
 	}
 
-	// [crispy] check if the pullet puff's z-coordinate is below of above
+	// [crispy] check if the bullet puff's z-coordinate is below or above
 	// its spawning sector's floor or ceiling, respectively, and move its
 	// coordinates to the point where the trajectory hits the plane
 	if (aimslope)
@@ -1334,7 +1330,7 @@ P_LineLaser
     if ((crispy->crosshair & ~CROSSHAIR_INTERCEPT) == CROSSHAIR_PROJECTED)
     {
 	// [crispy] don't aim at Spectres
-	if (linetarget && !(linetarget->flags & MF_SHADOW) && (crispy->freeaim != FREEAIM_DIRECT))
+	if (linetarget && !(linetarget->flags & MF_SHADOW) && (critical->freeaim != FREEAIM_DIRECT))
 		P_LineAttack(t1, angle, distance, aimslope, INT_MIN);
 	else
 		// [crispy] double the auto aim distance
@@ -1577,6 +1573,10 @@ boolean PIT_ChangeSector (mobj_t*	thing)
 
 	// [crispy] connect blood object with the monster that bleeds it
 	mo->target = thing;
+
+    // [crispy] Spectres bleed spectre blood
+    if (crispy->coloredblood == COLOREDBLOOD_ALL)
+        mo->flags |= (thing->flags & MF_SHADOW);
     }
 
     // keep checking (crush other things)	

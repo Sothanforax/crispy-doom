@@ -30,6 +30,7 @@
 #define DEH_VANILLA_NUMSFX 107
 
 void DEH_Init(void); // [crispy] un-static
+char *CleanString(char *s); // [crispy] un-static
 
 void DEH_ParseCommandLine(void);
 int DEH_LoadFile(const char *filename);
@@ -40,6 +41,8 @@ int DEH_LoadLumpByName(const char *name, boolean allow_long, boolean allow_error
 boolean DEH_ParseAssignment(char *line, char **variable_name, char **value);
 
 void DEH_Checksum(sha1_digest_t digest);
+
+char **DEH_GetFileNames(void);
 
 extern boolean deh_allow_extended_strings;
 extern boolean deh_allow_long_strings;

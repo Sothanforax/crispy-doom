@@ -163,6 +163,13 @@ void P_MovePlayer (player_t* player)
     // [crispy] give full control in no-clipping mode
     onground |= (player->mo->flags & MF_NOCLIP);
 	
+    // [crispy] fast polling
+    if (player == &players[consoleplayer])
+    {
+        localview.ticangle += localview.ticangleturn << 16;
+        localview.ticangleturn = 0;
+    }
+
     if (cmd->forwardmove && onground)
 	P_Thrust (player, player->mo->angle, cmd->forwardmove*2048);
     else
@@ -289,6 +296,12 @@ void P_PlayerThink (player_t* player)
     player->oldlookdir = player->lookdir;
     player->oldrecoilpitch = player->recoilpitch;
 
+    // [crispy] fast polling
+    if (player == &players[consoleplayer])
+    {
+        localview.oldticangle = localview.ticangle;
+    }
+
     // [crispy] update weapon sound source coordinates
     if (player->so != player->mo)
     {
@@ -380,7 +393,7 @@ void P_PlayerThink (player_t* player)
             !player->jumpTics)
         {
             // [crispy] Hexen sets 9; Strife adds 8
-            player->mo->momz = (7 + crispy->jump) * FRACUNIT;
+            player->mo->momz = (7 + critical->jump) * FRACUNIT;
             player->jumpTics = 18;
             // [NS] Jump sound.
             S_StartSoundOptional(player->mo, sfx_pljump, -1);

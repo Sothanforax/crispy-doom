@@ -27,6 +27,8 @@
 #include "s_sound.h"
 #include "v_video.h"
 #include "i_swap.h"
+#include "am_map.h"
+
 
 // TYPES -------------------------------------------------------------------
 
@@ -83,10 +85,10 @@ static void CheatRevealFunc(player_t * player, Cheat_t * cheat);
 static void CheatTrackFunc1(player_t * player, Cheat_t * cheat);
 static void CheatTrackFunc2(player_t * player, Cheat_t * cheat);
 
-// EXTERNAL DATA DECLARATIONS ----------------------------------------------
+// [crispy] new cheat functions
+static void CheatShowFpsFunc(player_t * player, Cheat_t * cheat);
 
-extern int ArmorIncrement[NUMCLASSES][NUMARMOR];
-extern int AutoArmorSave[NUMCLASSES];
+// EXTERNAL DATA DECLARATIONS ----------------------------------------------
 
 // PUBLIC DATA DECLARATIONS ------------------------------------------------
 
@@ -215,6 +217,9 @@ cheatseq_t CheatTrackSeq1 = CHEAT("`", 0);
 
 cheatseq_t CheatTrackSeq2 = CHEAT("`", 2);
 
+// [crispy] new cheat sequences
+cheatseq_t CheatShowFpsSeq = CHEAT("showfps", 0); // Show FPS
+
 static Cheat_t Cheats[] = {
     {CheatTrackFunc1, &CheatTrackSeq1},
     {CheatTrackFunc2, &CheatTrackSeq2},
@@ -243,6 +248,9 @@ static Cheat_t Cheats[] = {
     {CheatScriptFunc2, &CheatScriptSeq2},
     {CheatScriptFunc3, &CheatScriptSeq3},
     {CheatRevealFunc, &CheatRevealSeq},
+
+    // [crispy] new cheats
+    {CheatShowFpsFunc, &CheatShowFpsSeq},
 };
 
 #define SET_CHEAT(cheat, seq) \
@@ -420,6 +428,7 @@ void SB_Ticker(void)
         }
         HealthMarker += delta;
     }
+    SB_PaletteFlash(false);
 }
 
 //==========================================================================
@@ -744,7 +753,6 @@ static int oldpieces = -1;
 static int oldweapon = -1;
 static int oldkeys = -1;
 
-extern boolean automapactive;
 
 // [crispy] Needed to support widescreen status bar.
 void SB_ForceRedraw(void)
@@ -761,24 +769,18 @@ static void RefreshBackground(void)
 
     if ((SCREENWIDTH >> crispy->hires) != ORIGWIDTH)
     {
-        int x, y;
         byte *src;
         pixel_t *dest;
 
         src = W_CacheLumpName("F_022", PU_CACHE);
         dest = st_backing_screen;
 
-        for (y = SCREENHEIGHT - SBARHEIGHT; y < SCREENHEIGHT; y++)
-        {
-            for (x = 0; x < SCREENWIDTH; x++)
-            {
-                *dest++ = src[((y & 63) << 6) + (x & 63)];
-            }
-        }
+        V_FillFlat(SCREENHEIGHT - SBARHEIGHT, SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 
         // [crispy] preserve bezel bottom edge
         if (scaledviewwidth == SCREENWIDTH)
         {
+            int x;
             patch_t *const patch = W_CacheLumpName("bordb", PU_CACHE);
 
             for (x = 0; x < WIDESCREENDELTA; x += 16)
@@ -794,6 +796,8 @@ static void RefreshBackground(void)
                    ORIGSBARHEIGHT, 0, ORIGHEIGHT - ORIGSBARHEIGHT);
 }
 
+extern int right_widget_w; // [crispy]
+
 void SB_Drawer(void)
 {
     // Sound info debug stuff
@@ -802,7 +806,8 @@ void SB_Drawer(void)
         DrawSoundInfo();
     }
     CPlayer = &players[consoleplayer];
-    if (viewheight == SCREENHEIGHT && !automapactive)
+    if (viewheight == SCREENHEIGHT
+        && !(automapactive && !crispy->automapoverlay))
     {
         DrawFullScreenStuff();
         SB_state = -1;
@@ -812,7 +817,19 @@ void SB_Drawer(void)
         if (SB_state == -1)
         {
             RefreshBackground(); // [crispy] for widescreen
-            V_DrawPatch(0, 134, PatchH2BAR);
+
+            // [crispy] support wide status bars with 0 offset
+            if (SHORT(PatchH2BAR->width) > ORIGWIDTH &&
+                    SHORT(PatchH2BAR->leftoffset) == 0)
+            {
+                V_DrawPatch((ORIGWIDTH - SHORT(PatchH2BAR->width)) / 2, 134,
+                        PatchH2BAR);
+            }
+            else
+            {
+                V_DrawPatch(0, 134, PatchH2BAR);
+            }
+
             oldhealth = -1;
         }
         DrawCommonBar();
@@ -821,7 +838,7 @@ void SB_Drawer(void)
             if (SB_state != 0)
             {
                 // Main interface
-                if (!automapactive)
+                if (!(automapactive && !crispy->automapoverlay))
                 {
                     V_DrawPatch(38, 162, PatchSTATBAR);
                 }
@@ -839,7 +856,7 @@ void SB_Drawer(void)
                 oldweapon = -1;
                 oldkeys = -1;
             }
-            if (!automapactive)
+            if (!(automapactive && !crispy->automapoverlay))
             {
                 DrawMainBar();
             }
@@ -855,7 +872,6 @@ void SB_Drawer(void)
             SB_state = 1;
         }
     }
-    SB_PaletteFlash(false);
     DrawAnimatedIcons();
 }
 
@@ -869,10 +885,13 @@ static void DrawAnimatedIcons(void)
 {
     int frame;
     static boolean hitCenterFrame;
+    int spinfly_x, spinspeed_x, spindefense_x, spinminotaur_x; // [crispy]
 
     // Wings of wrath
     if (CPlayer->powers[pw_flight])
     {
+        spinfly_x = 20 - WIDESCREENDELTA; // [crispy]
+
         if (CPlayer->powers[pw_flight] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_flight] & 16))
         {
@@ -881,13 +900,15 @@ static void DrawAnimatedIcons(void)
             {
                 if (hitCenterFrame && (frame != 15 && frame != 0))
                 {
-                    V_DrawPatch(20, 19, W_CacheLumpNum(SpinFlylump + 15,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 19,
+                                W_CacheLumpNum(SpinFlylump + 15,
+                                                PU_CACHE));
                 }
                 else
                 {
-                    V_DrawPatch(20, 19, W_CacheLumpNum(SpinFlylump + frame,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 19,
+                                W_CacheLumpNum(SpinFlylump + frame,
+                                                PU_CACHE));
                     hitCenterFrame = false;
                 }
             }
@@ -895,14 +916,16 @@ static void DrawAnimatedIcons(void)
             {
                 if (!hitCenterFrame && (frame != 15 && frame != 0))
                 {
-                    V_DrawPatch(20, 19, W_CacheLumpNum(SpinFlylump + frame,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 19,
+                                W_CacheLumpNum(SpinFlylump + frame,
+                                                PU_CACHE));
                     hitCenterFrame = false;
                 }
                 else
                 {
-                    V_DrawPatch(20, 19, W_CacheLumpNum(SpinFlylump + 15,
-                                                       PU_CACHE));
+                    V_DrawPatch(spinfly_x, 19,
+                                W_CacheLumpNum(SpinFlylump + 15,
+                                                PU_CACHE));
                     hitCenterFrame = true;
                 }
             }
@@ -914,12 +937,15 @@ static void DrawAnimatedIcons(void)
     // Speed Boots
     if (CPlayer->powers[pw_speed])
     {
+        spinspeed_x = 60 - WIDESCREENDELTA; // [crispy]
+
         if (CPlayer->powers[pw_speed] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_speed] & 16))
         {
             frame = (leveltime / 3) & 15;
-            V_DrawPatch(60, 19, W_CacheLumpNum(SpinSpeedLump + frame,
-                                               PU_CACHE));
+            V_DrawPatch(spinspeed_x, 19,
+                        W_CacheLumpNum(SpinSpeedLump + frame,
+                                        PU_CACHE));
         }
         BorderTopRefresh = true;
         UpdateState |= I_MESSAGES;
@@ -928,12 +954,16 @@ static void DrawAnimatedIcons(void)
     // Defensive power
     if (CPlayer->powers[pw_invulnerability])
     {
+        spindefense_x = 260 + WIDESCREENDELTA; // [crispy]
+        spindefense_x -= right_widget_w; // [crispy]
+
         if (CPlayer->powers[pw_invulnerability] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_invulnerability] & 16))
         {
             frame = (leveltime / 3) & 15;
-            V_DrawPatch(260, 19, W_CacheLumpNum(SpinDefenseLump + frame,
-                                                PU_CACHE));
+            V_DrawPatch(spindefense_x, 19,
+                        W_CacheLumpNum(SpinDefenseLump + frame,
+                                        PU_CACHE));
         }
         BorderTopRefresh = true;
         UpdateState |= I_MESSAGES;
@@ -942,12 +972,16 @@ static void DrawAnimatedIcons(void)
     // Minotaur Active
     if (CPlayer->powers[pw_minotaur])
     {
+        spinminotaur_x = 300 + WIDESCREENDELTA; // [crispy]
+        spinminotaur_x -= right_widget_w; // [crispy]
+
         if (CPlayer->powers[pw_minotaur] > BLINKTHRESHOLD
             || !(CPlayer->powers[pw_minotaur] & 16))
         {
             frame = (leveltime / 3) & 15;
-            V_DrawPatch(300, 19, W_CacheLumpNum(SpinMinotaurLump + frame,
-                                                PU_CACHE));
+            V_DrawPatch(spinminotaur_x, 19,
+                        W_CacheLumpNum(SpinMinotaurLump + frame,
+                                        PU_CACHE));
         }
         BorderTopRefresh = true;
         UpdateState |= I_MESSAGES;
@@ -967,7 +1001,9 @@ void SB_PaletteFlash(boolean forceChange)
 {
     static int sb_palette = 0;
     int palette;
+#ifndef CRISPY_TRUECOLOR
     byte *pal;
+#endif
 
     if (forceChange)
     {
@@ -1020,8 +1056,12 @@ void SB_PaletteFlash(boolean forceChange)
     if (palette != sb_palette)
     {
         sb_palette = palette;
+#ifndef CRISPY_TRUECOLOR
         pal = (byte *) W_CacheLumpNum(PlayPalette, PU_CACHE) + palette * 768;
         I_SetPalette(pal);
+#else
+        I_SetPalette(palette);
+#endif
     }
 }
 
@@ -1339,7 +1379,7 @@ void DrawKeyBar(void)
     if (oldkeys != CPlayer->keys)
     {
         xPosition = 46;
-        for (i = 0; i < NUMKEYS && xPosition <= 126; i++)
+        for (i = 0; i < NUM_KEY_TYPES && xPosition <= 126; i++)
         {
             if (CPlayer->keys & (1 << i))
             {
@@ -1706,7 +1746,6 @@ static void CheatNoClipFunc(player_t * player, Cheat_t * cheat)
 static void CheatWeaponsFunc(player_t * player, Cheat_t * cheat)
 {
     int i;
-    //extern boolean *WeaponInShareware;
 
     for (i = 0; i < NUMARMOR; i++)
     {
@@ -1842,8 +1881,6 @@ static void CheatWarpFunc(player_t * player, Cheat_t * cheat)
 
 static void CheatPigFunc(player_t * player, Cheat_t * cheat)
 {
-    extern boolean P_UndoPlayerMorph(player_t * player);
-
     if (player->morphTics)
     {
         P_UndoPlayerMorph(player);
@@ -1995,7 +2032,6 @@ static void CheatScriptFunc3(player_t * player, Cheat_t * cheat)
     }
 }
 
-extern int cheating;
 
 static void CheatRevealFunc(player_t * player, Cheat_t * cheat)
 {
@@ -2069,5 +2105,19 @@ static void CheatTrackFunc2(player_t * player, Cheat_t * cheat)
         // No error encountered while attempting to play the track
         M_snprintf(buffer, sizeof(buffer), "PLAYING TRACK: %.2d\n", track);
         P_SetMessage(player, buffer, true);
+    }
+}
+
+// [crispy] "Cheat" to show FPS
+static void CheatShowFpsFunc(player_t* player, Cheat_t* cheat)
+{
+    player->cheats ^= CF_SHOWFPS;
+    if (player->cheats & CF_SHOWFPS)
+    {
+        P_SetMessage(player, TXT_SHOWFPSON, false);
+    }
+    else
+    {
+        P_SetMessage(player, TXT_SHOWFPSOFF, false);
     }
 }

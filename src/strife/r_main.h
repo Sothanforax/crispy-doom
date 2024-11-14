@@ -35,6 +35,7 @@ extern fixed_t		viewsin;
 extern int		viewwindowx;
 extern int		viewwindowy;
 
+extern boolean setsizeneeded;
 
 
 extern int		centerx;
@@ -58,17 +59,18 @@ extern int		loopcount;
 
 // Lighting constants.
 // Now why not 32 levels here?
-#define LIGHTLEVELS	        16
-#define LIGHTSEGSHIFT	         4
+// [crispy] parameterized for smooth diminishing lighting
+extern int LIGHTLEVELS;
+extern int LIGHTSEGSHIFT;
+extern int LIGHTBRIGHT;
+extern int MAXLIGHTSCALE;
+extern int LIGHTSCALESHIFT;
+extern int MAXLIGHTZ;
+extern int LIGHTZSHIFT;
 
-#define MAXLIGHTSCALE		48
-#define LIGHTSCALESHIFT		12
-#define MAXLIGHTZ	       128
-#define LIGHTZSHIFT		20
-
-extern lighttable_t*	scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
-extern lighttable_t*	scalelightfixed[MAXLIGHTSCALE];
-extern lighttable_t*	zlight[LIGHTLEVELS][MAXLIGHTZ];
+extern lighttable_t***	scalelight;
+extern lighttable_t**	scalelightfixed;
+extern lighttable_t***	zlight;
 
 extern int		extralight;
 extern lighttable_t*	fixedcolormap;
@@ -76,8 +78,8 @@ extern lighttable_t*	fixedcolormap;
 
 // Number of diminishing brightness levels.
 // There a 0-31, i.e. 32 LUT in the COLORMAP lump.
-#define NUMCOLORMAPS		32
-
+// [crispy] parameterized for smooth diminishing lighting
+extern int NUMCOLORMAPS;
 
 // Blocky/low detail mode.
 //B remove this?
@@ -97,6 +99,10 @@ extern void		(*fuzzcolfunc) (void);
 extern void		(*spanfunc) (void);
 
 
+// [crispy] smooth texture scrolling
+void R_InterpolateTextureOffsets (void);
+
+
 //
 // Utility functions.
 int
@@ -113,6 +119,11 @@ R_PointOnSegSide
 
 angle_t
 R_PointToAngle
+( fixed_t	x,
+  fixed_t	y );
+
+angle_t
+R_PointToAngleCrispy
 ( fixed_t	x,
   fixed_t	y );
 
@@ -142,7 +153,39 @@ R_AddPointToBox
   int		y,
   fixed_t*	box );
 
+inline static fixed_t LerpFixed(fixed_t oldvalue, fixed_t newvalue)
+{
+    return (oldvalue + FixedMul(newvalue - oldvalue, fractionaltic));
+}
 
+inline static int LerpInt(int oldvalue, int newvalue)
+{
+    return (oldvalue + (int)((newvalue - oldvalue) * FIXED2DOUBLE(fractionaltic)));
+}
+
+// [AM] Interpolate between two angles.
+inline static angle_t LerpAngle(angle_t oangle, angle_t nangle)
+{
+    if (nangle == oangle)
+        return nangle;
+    else if (nangle > oangle)
+    {
+        if (nangle - oangle < ANG270)
+            return oangle + (angle_t)((nangle - oangle) * FIXED2DOUBLE(fractionaltic));
+        else // Wrapped around
+            return oangle - (angle_t)((oangle - nangle) * FIXED2DOUBLE(fractionaltic));
+    }
+    else // nangle < oangle
+    {
+        if (oangle - nangle < ANG270)
+            return oangle - (angle_t)((oangle - nangle) * FIXED2DOUBLE(fractionaltic));
+        else // Wrapped around
+            return oangle + (angle_t)((nangle - oangle) * FIXED2DOUBLE(fractionaltic));
+    }
+}
+
+// [AM] Interpolate between two angles.
+angle_t R_InterpolateAngle(angle_t oangle, angle_t nangle, fixed_t scale);
 
 //
 // REFRESH - the actual rendering functions.
@@ -154,7 +197,12 @@ void R_RenderPlayerView (player_t *player);
 // Called by startup code.
 void R_Init (void);
 
+void R_InitColormaps (void);
+
 // Called by M_Responder.
 void R_SetViewSize (int blocks, int detail);
+
+void R_ExecuteSetViewSize(void);
+
 
 #endif

@@ -21,9 +21,11 @@ add_library(heretic STATIC
             m_random.c          m_random.h
             mn_menu.c
                                 p_action.h
+            p_blockmap.c
             p_ceilng.c
             p_doors.c
             p_enemy.c
+            p_extnodes.c        p_extnodes.h
             p_floor.c
             p_inter.c
             p_lights.c
@@ -41,6 +43,7 @@ add_library(heretic STATIC
             p_telept.c
             p_tick.c
             p_user.c
+            r_bmaps.c           r_bmaps.h
             r_bsp.c
             r_data.c
             r_draw.c
@@ -48,10 +51,17 @@ add_library(heretic STATIC
             r_main.c
             r_plane.c
             r_segs.c
+            r_swirl.c           r_swirl.h
             r_things.c
             sb_bar.c
             sounds.c            sounds.h
             s_sound.c           s_sound.h)
 
 target_include_directories(heretic PRIVATE "../" "${CMAKE_CURRENT_BINARY_DIR}/../../")
-target_link_libraries(heretic textscreen SDL2::SDL2 SDL2::mixer SDL2::net)
+target_link_libraries(heretic textscreen SDL2::SDL2)
+if(ENABLE_SDL2_MIXER)
+    target_link_libraries(heretic SDL2_mixer::SDL2_mixer)
+endif()
+if(ENABLE_SDL2_NET)
+    target_link_libraries(heretic SDL2_net::SDL2_net)
+endif()

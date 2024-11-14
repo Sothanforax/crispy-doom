@@ -23,6 +23,7 @@
 #include "i_video.h"
 #include "s_sound.h"
 #include "v_video.h"
+#include "am_map.h"
 
 static int finalestage;                // 0 = text, 1 = art screen
 static int finalecount;
@@ -35,10 +36,6 @@ static const char *finaleflat;
 
 static int FontABaseLump;
 
-extern boolean automapactive;
-extern boolean viewactive;
-
-extern void D_StartTitle(void);
 
 /*
 =======================
@@ -149,13 +146,11 @@ void F_Ticker(void)
 =======================
 */
 
-//#include "hu_stuff.h"
-//extern        patch_t *hu_font[HU_FONTSIZE];
 
 void F_TextWrite(void)
 {
-    byte *src, *dest;
-    int x, y;
+    byte *src;
+    pixel_t *dest;
     int count;
     const char *ch;
     int c;
@@ -167,19 +162,8 @@ void F_TextWrite(void)
 //
     src = W_CacheLumpName(finaleflat, PU_CACHE);
     dest = I_VideoBuffer;
-    for (y = 0; y < SCREENHEIGHT; y++)
-    {
-        for (x = 0; x < SCREENWIDTH / 64; x++)
-        {
-            memcpy(dest, src + ((y & 63) << 6), 64);
-            dest += 64;
-        }
-        if (SCREENWIDTH & 63)
-        {
-            memcpy(dest, src + ((y & 63) << 6), SCREENWIDTH & 63);
-            dest += (SCREENWIDTH & 63);
-        }
-    }
+    // [crispy] use unified flat filling function
+    V_FillFlat(0, SCREENHEIGHT, 0, SCREENWIDTH, src, dest);
 
 //      V_MarkRect (0, 0, SCREENWIDTH, SCREENHEIGHT);
 
@@ -225,7 +209,8 @@ void F_TextWrite(void)
 void F_DrawPatchCol(int x, patch_t * patch, int col)
 {
     column_t *column;
-    byte *source, *dest, *desttop;
+    byte *source;
+    pixel_t *dest, *desttop;
     int count;
 
     column = (column_t *) ((byte *) patch + LONG(patch->columnofs[col]));
@@ -330,7 +315,6 @@ void F_DemonScroll(void)
 void F_DrawUnderwater(void)
 {
     static boolean underwawa = false;
-    extern boolean askforquit;
     const char *lumpname;
     byte *palette;
 
@@ -348,7 +332,11 @@ void F_DrawUnderwater(void)
                 V_DrawFilledBox(0, 0, SCREENWIDTH, SCREENHEIGHT, 0);
                 lumpname = DEH_String("E2PAL");
                 palette = W_CacheLumpName(lumpname, PU_STATIC);
+#ifndef CRISPY_TRUECOLOR
                 I_SetPalette(palette);
+#else
+                R_SetUnderwaterPalette(palette);
+#endif
                 W_ReleaseLumpName(lumpname);
                 V_DrawFullscreenRawOrPatch(W_GetNumForName(DEH_String("E2END")));
             }
@@ -360,10 +348,14 @@ void F_DrawUnderwater(void)
         case 2:
             if (underwawa)
             {
+#ifndef CRISPY_TRUECOLOR
                 lumpname = DEH_String("PLAYPAL");
                 palette = W_CacheLumpName(lumpname, PU_STATIC);
                 I_SetPalette(palette);
                 W_ReleaseLumpName(lumpname);
+#else
+                R_InitColormaps();
+#endif
                 underwawa = false;
             }
             V_DrawFullscreenRawOrPatch(W_GetNumForName(DEH_String("TITLE")));

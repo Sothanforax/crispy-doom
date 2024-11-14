@@ -33,6 +33,8 @@
 #define BETWEEN(l,u,x) (((l)>(x))?(l):((x)>(u))?(u):(x))
 #endif
 
+#define CRISPY_FPSLIMIT_MAX 500
+
 typedef struct
 {
 	// [crispy] "crispness" config variables
@@ -49,13 +51,17 @@ typedef struct
 	int crosshairhealth;
 	int crosshairtarget;
 	int crosshairtype;
+	int defaultskill;
 	int demotimer;
 	int demotimerdir;
 	int demobar;
 	int extautomap;
 	int flipcorpses;
+	int fpslimit;
 	int freeaim;
 	int freelook;
+	int freelook_hh;
+	int gamma;
 	int hires;
 	int jump;
 	int leveltime;
@@ -91,6 +97,7 @@ typedef struct
 	boolean fliplevels;
 	boolean flipweapons;
 	boolean haved1e5;
+	boolean haved1e6;
 	boolean havee1m10;
 	boolean havemap33;
 	boolean havessg;
@@ -107,6 +114,7 @@ typedef struct
 	char *havenerve;
 	char *havemaster;
 	char *havesigil;
+	char *havesigil2;
 
 	const char *sdlversion;
 	const char *platform;
@@ -142,6 +150,14 @@ enum
     BRIGHTMAPS_SPRITES,
     BRIGHTMAPS_BOTH,
     NUM_BRIGHTMAPS,
+};
+
+enum
+{
+	COLOREDBLOOD_OFF,
+	COLOREDBLOOD_BLOOD,
+	COLOREDBLOOD_ALL,
+	NUM_COLOREDBLOOD,
 };
 
 enum
@@ -197,6 +213,13 @@ enum
 
 enum
 {
+    FREELOOK_HH_LOCK,
+    FREELOOK_HH_SPRING,
+    NUM_FREELOOKS_HH
+};
+
+enum
+{
     JUMP_OFF,
     JUMP_LOW,
     JUMP_HIGH,
@@ -225,6 +248,7 @@ enum
     WIDGETS_OFF,
     WIDGETS_AUTOMAP,
     WIDGETS_ALWAYS,
+    WIDGETS_STBAR,
     NUM_WIDGETS
 };
 
@@ -239,7 +263,17 @@ enum
 
 enum
 {
-    RATIO_4_3,
+    SKILL_ITYTD,
+    SKILL_HNTR,
+    SKILL_HMP,
+    SKILL_UV,
+    SKILL_NIGHTMARE,
+    NUM_SKILLS
+};
+
+enum
+{
+    RATIO_ORIG,
     RATIO_MATCH_SCREEN,
     RATIO_16_10,
     RATIO_16_9,

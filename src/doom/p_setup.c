@@ -257,7 +257,7 @@ void P_LoadSegs (int lump)
                 if (li->sidedef->midtexture)
                 {
                     li->backsector = 0;
-                    fprintf(stderr, "P_LoadSegs: Linedef %d has two-sided flag set, but no second sidedef\n", i);
+                    fprintf(stderr, "P_LoadSegs: Linedef %d has two-sided flag set, but no second sidedef\n", linedef);
                 }
                 else
                 li->backsector = GetSectorAtNullAddress();
@@ -277,6 +277,18 @@ void P_LoadSegs (int lump)
 }
 
 // [crispy] fix long wall wobble
+
+static angle_t anglediff(angle_t a, angle_t b)
+{
+	if (b > a)
+		return anglediff(b, a);
+
+	if (a - b < ANG180)
+		return a - b;
+	else // [crispy] wrap around
+		return b - a;
+}
+
 void P_SegLengths (boolean contrast_only)
 {
     int i;
@@ -298,6 +310,12 @@ void P_SegLengths (boolean contrast_only)
 		viewx = li->v1->r_x;
 		viewy = li->v1->r_y;
 		li->r_angle = R_PointToAngleCrispy(li->v2->r_x, li->v2->r_y);
+		// [crispy] more than just a little adjustment?
+		// back to the original angle then
+		if (anglediff(li->r_angle, li->angle) > ANG60/2)
+		{
+			li->r_angle = li->angle;
+		}
 	}
 
 	// [crispy] smoother fake contrast
@@ -305,13 +323,13 @@ void P_SegLengths (boolean contrast_only)
 	    li->fakecontrast = -LIGHTBRIGHT;
 	else
 	if (abs(finesine[li->r_angle >> ANGLETOFINESHIFT]) < rightangle)
-	    li->fakecontrast = -(LIGHTBRIGHT >> 1);
+	    li->fakecontrast = -LIGHTBRIGHT / 2;
 	else
 	if (!dx)
 	    li->fakecontrast = LIGHTBRIGHT;
 	else
 	if (abs(finecosine[li->r_angle >> ANGLETOFINESHIFT]) < rightangle)
-	    li->fakecontrast = LIGHTBRIGHT >> 1;
+	    li->fakecontrast = LIGHTBRIGHT / 2;
 	else
 	    li->fakecontrast = 0;
     }
@@ -444,12 +462,12 @@ void P_LoadNodes (int lump)
 
 	    // [crispy] add support for extended nodes
 	    // from prboom-plus/src/p_setup.c:937-957
-	    if (no->children[j] == 0xFFFF)
+	    if (no->children[j] == NO_INDEX)
 		no->children[j] = -1;
 	    else
-	    if (no->children[j] & 0x8000)
+	    if (no->children[j] & NF_SUBSECTOR_VANILLA)
 	    {
-		no->children[j] &= ~0x8000;
+		no->children[j] &= ~NF_SUBSECTOR_VANILLA;
 
 		if (no->children[j] >= numsubsectors)
 		    no->children[j] = 0;
@@ -869,8 +887,17 @@ void P_GroupLines (void)
 	}
 
 	// set the degenmobj_t to the middle of the bounding box
+	if (!crispy->soundfix)
+	{
 	sector->soundorg.x = (bbox[BOXRIGHT]+bbox[BOXLEFT])/2;
 	sector->soundorg.y = (bbox[BOXTOP]+bbox[BOXBOTTOM])/2;
+	}
+	else
+	{
+	// [crispy] Andrey Budko: fix sound origin for large levels
+	sector->soundorg.x = bbox[BOXRIGHT]/2+bbox[BOXLEFT]/2;
+	sector->soundorg.y = bbox[BOXTOP]/2+bbox[BOXBOTTOM]/2;
+	}
 		
 	// adjust bounding box to map blocks
 	block = (bbox[BOXTOP]-bmaporgy+MAXRADIUS)>>MAPBLOCKSHIFT;

@@ -565,7 +565,9 @@ void R_DrawTranslatedColumn (void)
 	//  used with PLAY sprites.
 	// Thus the "green" ramp of the player 0 sprite
 	//  is mapped to gray, red, black/indigo. 
-	*dest = dc_colormap[0][dc_translation[dc_source[frac>>FRACBITS]]];
+	// [crispy] brightmaps
+	const byte source = dc_source[frac>>FRACBITS];
+	*dest = dc_colormap[dc_brightmap[source]][dc_translation[source]];
 	dest += SCREENWIDTH;
 	
 	frac += fracstep; 
@@ -615,8 +617,10 @@ void R_DrawTranslatedColumnLow (void)
 	//  used with PLAY sprites.
 	// Thus the "green" ramp of the player 0 sprite
 	//  is mapped to gray, red, black/indigo. 
-	*dest = dc_colormap[0][dc_translation[dc_source[frac>>FRACBITS]]];
-	*dest2 = dc_colormap[0][dc_translation[dc_source[frac>>FRACBITS]]];
+	// [crispy] brightmaps
+	const byte source = dc_source[frac>>FRACBITS];
+	*dest = dc_colormap[dc_brightmap[source]][dc_translation[source]];
+	*dest2 = dc_colormap[dc_brightmap[source]][dc_translation[source]];
 	dest += SCREENWIDTH;
 	dest2 += SCREENWIDTH;
 	
@@ -652,11 +656,13 @@ void R_DrawTLColumn (void)
 
     do
     {
+        // [crispy] brightmaps
+        const byte source = dc_source[frac>>FRACBITS];
 #ifndef CRISPY_TRUECOLOR
         // actual translucency map lookup taken from boom202s/R_DRAW.C:255
-        *dest = tranmap[(*dest<<8)+dc_colormap[0][dc_source[frac>>FRACBITS]]];
+        *dest = tranmap[(*dest<<8)+dc_colormap[dc_brightmap[source]][source]];
 #else
-        const pixel_t destrgb = dc_colormap[0][dc_source[frac>>FRACBITS]];
+        const pixel_t destrgb = dc_colormap[dc_brightmap[source]][source];
         *dest = blendfunc(*dest, destrgb);
 #endif
 	dest += SCREENWIDTH;
@@ -699,11 +705,13 @@ void R_DrawTLColumnLow (void)
 
     do
     {
+	// [crispy] brightmaps
+	const byte source = dc_source[frac>>FRACBITS];        
 #ifndef CRISPY_TRUECOLOR
-	*dest = tranmap[(*dest<<8)+dc_colormap[0][dc_source[frac>>FRACBITS]]];
-	*dest2 = tranmap[(*dest2<<8)+dc_colormap[0][dc_source[frac>>FRACBITS]]];
+	*dest = tranmap[(*dest<<8)+dc_colormap[dc_brightmap[source]][source]];
+	*dest2 = tranmap[(*dest2<<8)+dc_colormap[dc_brightmap[source]][source]];
 #else
-	const pixel_t destrgb = dc_colormap[0][dc_source[frac>>FRACBITS]];
+	const pixel_t destrgb = dc_colormap[dc_brightmap[source]][source];
 	*dest = blendfunc(*dest, destrgb);
 	*dest2 = blendfunc(*dest2, destrgb);
 #endif
@@ -766,7 +774,7 @@ int			ds_x1;
 int			ds_x2;
 
 lighttable_t*		ds_colormap[2];
-byte*			ds_brightmap;
+const byte*			ds_brightmap;
 
 fixed_t			ds_xfrac; 
 fixed_t			ds_yfrac; 
@@ -979,6 +987,64 @@ void R_DrawSpanLow (void)
     } while (count--);
 }
 
+void R_DrawSpanSolid (void)
+{
+    const byte source = *ds_source;
+    pixel_t *dest;
+    int count;
+
+#ifdef RANGECHECK
+    if (ds_x2 < ds_x1
+	|| ds_x1<0
+	|| ds_x2>=SCREENWIDTH
+	|| (unsigned)ds_y>SCREENHEIGHT)
+    {
+	I_Error( "R_DrawSpanSolid: %i to %i at %i",
+		 ds_x1,ds_x2,ds_y);
+    }
+#endif
+
+    count = ds_x2 - ds_x1;
+
+    do
+    {
+	dest = ylookup[ds_y] + columnofs[flipviewwidth[ds_x1++]];
+	*dest = ds_colormap[ds_brightmap[source]][source];
+    } while (count--);
+}
+
+void R_DrawSpanSolidLow (void)
+{
+    const byte source = *ds_source;
+    pixel_t *dest;
+    int count;
+
+#ifdef RANGECHECK
+    if (ds_x2 < ds_x1
+	|| ds_x1<0
+	|| ds_x2>=SCREENWIDTH
+	|| (unsigned)ds_y>SCREENHEIGHT)
+    {
+	I_Error( "R_DrawSpanSolidLow: %i to %i at %i",
+		 ds_x1,ds_x2,ds_y);
+    }
+#endif
+
+    count = ds_x2 - ds_x1;
+
+    // Blocky mode, need to multiply by 2.
+    ds_x1 <<= 1;
+    ds_x2 <<= 1;
+
+    do
+    {
+	dest = ylookup[ds_y] + columnofs[flipviewwidth[ds_x1++]];
+	*dest = ds_colormap[ds_brightmap[source]][source];
+	dest = ylookup[ds_y] + columnofs[flipviewwidth[ds_x1++]];
+	*dest = ds_colormap[ds_brightmap[source]][source];
+    } while (count--);
+}
+
 //
 // R_InitBuffer 
 // Creats lookup tables that avoid
@@ -1068,27 +1134,8 @@ void R_FillBackScreen (void)
     src = W_CacheLumpName(name, PU_CACHE); 
     dest = background_buffer;
 	 
-    for (y=0 ; y<SCREENHEIGHT-SBARHEIGHT ; y++) 
-    { 
-#ifndef CRISPY_TRUECOLOR
-	for (x=0 ; x<SCREENWIDTH/64 ; x++) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), 64); 
-	    dest += 64; 
-	} 
-
-	if (SCREENWIDTH&63) 
-	{ 
-	    memcpy (dest, src+((y&63)<<6), SCREENWIDTH&63); 
-	    dest += (SCREENWIDTH&63); 
-	} 
-#else
-	for (x=0 ; x<SCREENWIDTH ; x++)
-	{
-		*dest++ = colormaps[src[((y&63)<<6) + (x&63)]];
-	}
-#endif
-    } 
+    // [crispy] use unified flat filling function
+    V_FillFlat(0, SCREENHEIGHT-SBARHEIGHT, 0, SCREENWIDTH, src, dest);
      
     // Draw screen and bezel; this is done to a separate screen buffer.
 

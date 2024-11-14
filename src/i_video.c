@@ -18,6 +18,7 @@
 
 
 #include <stdlib.h>
+#include <string.h>
 
 #include "SDL.h"
 #include "SDL_opengl.h"
@@ -28,8 +29,6 @@
 #endif
 #include <windows.h>
 #endif
-
-#include "icon.c"
 
 #include "crispy.h"
 
@@ -88,8 +87,6 @@ static SDL_Rect blit_rect = {
 };
 #endif
 
-static uint32_t pixel_format;
-
 // palette
 
 #ifdef CRISPY_TRUECOLOR
@@ -97,10 +94,13 @@ static SDL_Texture *curpane = NULL;
 static SDL_Texture *redpane = NULL;
 static SDL_Texture *yelpane = NULL;
 static SDL_Texture *grnpane = NULL;
+// Hexen exclusive color panes
+static SDL_Texture *grnspane = NULL;
+static SDL_Texture *bluepane = NULL;
+static SDL_Texture *graypane = NULL;
+static SDL_Texture *orngpane = NULL;
 static int pane_alpha;
-static unsigned int rmask, gmask, bmask, amask; // [crispy] moved up here
-static const uint8_t blend_alpha = 0xa8;
-extern pixel_t* colormaps; // [crispy] evil hack to get FPS dots working as in Vanilla
+extern pixel_t* pal_color; // [crispy] evil hack to get FPS dots working as in Vanilla
 #else
 static SDL_Color palette[256];
 #endif
@@ -221,6 +221,11 @@ int usegamma = 0;
 
 // Joystick/gamepad hysteresis
 unsigned int joywait = 0;
+
+// Icon RGB data and dimensions
+static const unsigned int *icon_data;
+static int icon_w;
+static int icon_h;
 
 static boolean MouseShouldBeGrabbed()
 {
@@ -451,8 +456,6 @@ static void I_ToggleFullScreen(void)
 
 void I_GetEvent(void)
 {
-    extern void I_HandleKeyboardEvent(SDL_Event *sdlevent);
-    extern void I_HandleMouseEvent(SDL_Event *sdlevent);
     SDL_Event sdlevent;
 
     SDL_PumpEvents();
@@ -531,6 +534,18 @@ void I_StartTic (void)
     }
 }
 
+void I_StartDisplay(void) // [crispy]
+{
+    // [AM] Figure out how far into the current tic we're in as a fixed_t.
+    fractionaltic = I_GetFracRealTime();
+
+    SDL_PumpEvents();
+
+    if (usemouse && !nomouse && window_focused)
+    {
+        I_ReadMouseUncapped();
+    }
+}
 
 //
 // I_UpdateNoBlit
@@ -715,7 +730,7 @@ static void CreateUpscaledTexture(boolean force)
     SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "linear");
 
     new_texture = SDL_CreateTexture(renderer,
-                                pixel_format,
+                                SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_TARGET,
                                 w_upscale*SCREENWIDTH,
                                 h_upscale*SCREENHEIGHT);
@@ -799,13 +814,13 @@ void I_FinishUpdate (void)
 #ifndef CRISPY_TRUECOLOR
 	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = 0xff;
 #else
-	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = colormaps[0xff];
+	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = pal_color[0xff];
 #endif
 	for ( ; i<20*4 ; i+=4)
 #ifndef CRISPY_TRUECOLOR
 	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = 0x0;
 #else
-	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = colormaps[0x0];
+	    I_VideoBuffer[ (SCREENHEIGHT-1)*SCREENWIDTH + i] = pal_color[0x0];
 #endif
     }
 
@@ -848,20 +863,22 @@ void I_FinishUpdate (void)
     }
 
     // Blit from the paletted 8-bit screen buffer to the intermediate
-    // 32-bit RGBA buffer that we can load into the texture.
+    // 32-bit RGBA buffer and update the intermediate texture with the
+    // contents of the RGBA buffer.
 
+    SDL_LockTexture(texture, &blit_rect, &argbbuffer->pixels,
+                    &argbbuffer->pitch);
     SDL_LowerBlit(screenbuffer, &blit_rect, argbbuffer, &blit_rect);
-#endif
-
-    // Update the intermediate texture with the contents of the RGBA buffer.
-
+    SDL_UnlockTexture(texture);
+#else
     SDL_UpdateTexture(texture, NULL, argbbuffer->pixels, argbbuffer->pitch);
+#endif
 
     // Make sure the pillarboxes are kept clear each frame.
 
     SDL_RenderClear(renderer);
 
-    if (crispy->smoothscaling)
+    if (crispy->smoothscaling && !force_software_renderer)
     {
     // Render this intermediate texture into the upscaled texture
     // using "nearest" integer scaling.
@@ -892,10 +909,34 @@ void I_FinishUpdate (void)
 
     SDL_RenderPresent(renderer);
 
-    // [AM] Figure out how far into the current tic we're in as a fixed_t.
-    if (crispy->uncapped)
+    if (crispy->uncapped && !singletics)
     {
-	fractionaltic = I_GetFracRealTime();
+        // Limit framerate
+        if (crispy->fpslimit >= TICRATE)
+        {
+            uint64_t target_time = 1000000ull / crispy->fpslimit;
+            static uint64_t start_time;
+
+            while (1)
+            {
+                uint64_t current_time = I_GetTimeUS();
+                uint64_t elapsed_time = current_time - start_time;
+                uint64_t remaining_time = 0;
+
+                if (elapsed_time >= target_time)
+                {
+                    start_time = current_time;
+                    break;
+                }
+
+                remaining_time = target_time - elapsed_time;
+
+                if (remaining_time > 1000)
+                {
+                    I_Sleep((remaining_time - 1000) / 1000);
+                }
+            }
+        }
     }
 
     // Restore background and undo the disk indicator, if it was drawn.
@@ -916,29 +957,38 @@ void I_ReadScreen (pixel_t* scr)
 // I_SetPalette
 //
 // [crispy] intermediate gamma levels
-byte **gamma2table = NULL;
+byte gamma2table[18][256];
+
+static const float gammalevels[9] =
+{
+    // Darker
+    0.50f, 0.55f, 0.60f, 0.65f, 0.70f, 0.75f, 0.80f, 0.85f, 0.90f,
+};
+
 void I_SetGammaTable (void)
 {
-	int i;
+	int i, j, k;
 
-	gamma2table = malloc(9 * sizeof(*gamma2table));
+	for (i = 0; i < 9; ++i)
+	{
+		for (j = 0; j < 256; ++j)
+		{
+			gamma2table[i][j] = (byte)(pow(j / 255.0, 1.0 / gammalevels[i]) * 255.0 + 0.5);
+		}
+	}
 
 	// [crispy] 5 original gamma levels
-	for (i = 0; i < 5; i++)
+	for (i = 9, k = 0; i < 18 && k < 5; i += 2, k++)
 	{
-		gamma2table[2*i] = (byte *)gammatable[i];
+		memcpy(gamma2table[i], gammatable[k], 256);
 	}
 
 	// [crispy] 4 intermediate gamma levels
-	for (i = 0; i < 4; i++)
+	for (i = 10, k = 0; i < 18 && k < 4; i += 2, k++)
 	{
-		int j;
-
-		gamma2table[2*i+1] = malloc(256 * sizeof(**gamma2table));
-
 		for (j = 0; j < 256; j++)
 		{
-			gamma2table[2*i+1][j] = (gamma2table[2*i][j] + gamma2table[2*i+2][j]) / 2;
+			gamma2table[i][j] = (gammatable[k][j] + gammatable[k + 1][j]) / 2;
 		}
 	}
 }
@@ -948,21 +998,16 @@ void I_SetPalette (byte *doompalette)
 {
     int i;
 
-    // [crispy] intermediate gamma levels
-    if (!gamma2table)
-    {
-        I_SetGammaTable();
-    }
-
     for (i=0; i<256; ++i)
     {
         // Zero out the bottom two bits of each channel - the PC VGA
         // controller only supports 6 bits of accuracy.
 
         // [crispy] intermediate gamma levels
-        palette[i].r = gamma2table[usegamma][*doompalette++] & ~3;
-        palette[i].g = gamma2table[usegamma][*doompalette++] & ~3;
-        palette[i].b = gamma2table[usegamma][*doompalette++] & ~3;
+        palette[i].a = 0xFFU;
+        palette[i].r = gamma2table[crispy->gamma][*doompalette++] & ~3;
+        palette[i].g = gamma2table[crispy->gamma][*doompalette++] & ~3;
+        palette[i].b = gamma2table[crispy->gamma][*doompalette++] & ~3;
     }
 
     palette_to_set = true;
@@ -1027,6 +1072,64 @@ void I_SetPalette (int palette)
 	    curpane = grnpane;
 	    pane_alpha = 0xff * 125 / 1000;
 	    break;
+	// Hexen exclusive color panes and palette indexes
+	// https://doomwiki.org/wiki/PLAYPAL#Hexen
+	case 14:  // STARTPOISONPALS + 1 (13 is shared with other games)
+	    curpane = grnspane;
+	    pane_alpha = 0x33; // 51 (20%)
+	    break;
+	case 15:
+	    curpane = grnspane;
+	    pane_alpha = 0x4c; // 76 (30%)
+	    break;
+	case 16:
+	    curpane = grnspane;
+	    pane_alpha = 0x66; // 102 (40%)
+	    break;
+	case 17:
+	    curpane = grnspane;
+	    pane_alpha = 0x7f; // 127 (50%)
+	    break;
+	case 18:
+	    curpane = grnspane;
+	    pane_alpha = 0x99; // 153 (60%)
+	    break;
+	case 19:
+	    curpane = grnspane;
+	    pane_alpha = 0xb2; // 178 (70%)
+	    break;
+	case 20:
+	    curpane = grnspane;
+	    pane_alpha = 0xcc; // 204 (80%)
+	    break;
+	case 21:  // STARTICEPAL
+	    curpane = bluepane;
+	    pane_alpha = 0x80; // 128 (50%)
+	    break;
+	case 22:  // STARTHOLYPAL
+	    curpane = graypane;
+	    pane_alpha = 0x7f; // 127 (50%)
+	    break;
+	case 23:
+	    curpane = graypane;
+	    pane_alpha = 0x6a; // 106
+	    break;
+	case 24:
+	    curpane = graypane;
+	    pane_alpha = 0x34; // 52
+	    break;
+	case 25:  // STARTSCOURGEPAL
+	    curpane = orngpane;
+	    pane_alpha = 0x7f; // 127 (50%)
+	    break;
+	case 26:
+	    curpane = orngpane;
+	    pane_alpha = 0x60; // 96
+	    break;
+	case 27:
+	    curpane = orngpane;
+	    pane_alpha = 0x48; // 72
+	    break;
 	default:
 	    I_Error("Unknown palette: %d!\n", palette);
 	    break;
@@ -1057,6 +1160,13 @@ void I_InitWindowTitle(void)
     free(buf);
 }
 
+void I_RegisterWindowIcon(const unsigned int *icon, int width, int height)
+{
+    icon_data = icon;
+    icon_w = width;
+    icon_h = height;
+}
+
 // Set the application icon
 
 void I_InitWindowIcon(void)
@@ -1065,8 +1175,8 @@ void I_InitWindowIcon(void)
 
     surface = SDL_CreateRGBSurfaceFrom((void *) icon_data, icon_w, icon_h,
                                        32, icon_w * 4,
-                                       0xff << 24, 0xff << 16,
-                                       0xff << 8, 0xff << 0);
+                                       0xffu << 24, 0xffu << 16,
+                                       0xffu << 8, 0xffu << 0);
 
     SDL_SetWindowIcon(screen, surface);
     SDL_FreeSurface(surface);
@@ -1076,10 +1186,20 @@ void I_InitWindowIcon(void)
 
 static void SetScaleFactor(int factor)
 {
+    int height;
+
     // Pick 320x200 or 320x240, depending on aspect ratio correct
+    if (aspect_ratio_correct)
+    {
+        height = SCREENHEIGHT_4_3;
+    }
+    else
+    {
+        height = SCREENHEIGHT;
+    }
 
     window_width = factor * SCREENWIDTH;
-    window_height = factor * actualheight;
+    window_height = factor * height;
     fullscreen = false;
 }
 
@@ -1186,6 +1306,24 @@ void I_GraphicsCheckCommandLine(void)
             window_width = w;
             window_height = h;
             fullscreen = false;
+        }
+    }
+
+    //!
+    // @category video
+    // @arg <x>
+    //
+    // Specify the display number on which to show the screen.
+    //
+
+    i = M_CheckParmWithArgs("-display", 1);
+
+    if (i > 0)
+    {
+        int display = atoi(myargv[i + 1]);
+        if (display >= 0)
+        {
+            video_display = display;
         }
     }
 
@@ -1318,10 +1456,6 @@ static void SetVideoMode(void)
 {
     int w, h;
     int x, y;
-#ifndef CRISPY_TRUECOLOR
-    unsigned int rmask, gmask, bmask, amask;
-#endif
-    int bpp;
     int window_flags = 0, renderer_flags = 0;
     SDL_DisplayMode mode;
 
@@ -1379,8 +1513,6 @@ static void SetVideoMode(void)
             SDL_GetError());
         }
 
-        pixel_format = SDL_GetWindowPixelFormat(screen);
-
         SDL_SetWindowMinimumSize(screen, SCREENWIDTH, actualheight);
 
         I_InitWindowTitle();
@@ -1398,12 +1530,12 @@ static void SetVideoMode(void)
     }
 
     // Turn on vsync if we aren't in a -timedemo
-    if (!singletics && mode.refresh_rate > 0)
+    if ((!singletics && mode.refresh_rate > 0) || crispy->demowarp)
     {
-      if (crispy->vsync) // [crispy] uncapped vsync
-      {
-        renderer_flags |= SDL_RENDERER_PRESENTVSYNC;
-      }
+        if (crispy->vsync) // [crispy] uncapped vsync
+        {
+            renderer_flags |= SDL_RENDERER_PRESENTVSYNC;
+        }
     }
 
     if (force_software_renderer)
@@ -1497,12 +1629,10 @@ static void SetVideoMode(void)
 
     if (argbbuffer == NULL)
     {
-        SDL_PixelFormatEnumToMasks(pixel_format, &bpp,
-                                   &rmask, &gmask, &bmask, &amask);
-        argbbuffer = SDL_CreateRGBSurface(0,
-                                          SCREENWIDTH, SCREENHEIGHT, bpp,
-                                          rmask, gmask, bmask, amask);
 #ifdef CRISPY_TRUECOLOR
+        argbbuffer = SDL_CreateRGBSurfaceWithFormat(
+                     0, SCREENWIDTH, SCREENHEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+
         SDL_FillRect(argbbuffer, NULL, I_MapRGB(0xff, 0x0, 0x0));
         redpane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
         SDL_SetTextureBlendMode(redpane, SDL_BLENDMODE_BLEND);
@@ -1514,8 +1644,28 @@ static void SetVideoMode(void)
         SDL_FillRect(argbbuffer, NULL, I_MapRGB(0x0, 0xff, 0x0));
         grnpane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
         SDL_SetTextureBlendMode(grnpane, SDL_BLENDMODE_BLEND);
+
+        SDL_FillRect(argbbuffer, NULL, I_MapRGB(0x2c, 0x5c, 0x24)); // 44, 92, 36
+        grnspane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
+        SDL_SetTextureBlendMode(grnspane, SDL_BLENDMODE_BLEND);
+
+        SDL_FillRect(argbbuffer, NULL, I_MapRGB(0x0, 0x0, 0xe0)); // 0, 0, 224
+        bluepane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
+        SDL_SetTextureBlendMode(bluepane, SDL_BLENDMODE_BLEND);
+
+        SDL_FillRect(argbbuffer, NULL, I_MapRGB(0x82, 0x82, 0x82)); // 130, 130, 130
+        graypane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
+        SDL_SetTextureBlendMode(graypane, SDL_BLENDMODE_BLEND);
+
+        SDL_FillRect(argbbuffer, NULL, I_MapRGB(0x96, 0x6e, 0x0)); // 150, 110, 0
+        orngpane = SDL_CreateTextureFromSurface(renderer, argbbuffer);
+        SDL_SetTextureBlendMode(orngpane, SDL_BLENDMODE_BLEND);
+#else
+	    // pixels and pitch will be filled with the texture's values
+	    // in I_FinishUpdate()
+	    argbbuffer = SDL_CreateRGBSurfaceWithFormatFrom(
+                     NULL, w, h, 0, 0, SDL_PIXELFORMAT_ARGB8888);
 #endif
-        SDL_FillRect(argbbuffer, NULL, 0);
     }
 
     if (texture != NULL)
@@ -1534,7 +1684,7 @@ static void SetVideoMode(void)
     // is going to change frequently.
 
     texture = SDL_CreateTexture(renderer,
-                                pixel_format,
+                                SDL_PIXELFORMAT_ARGB8888,
                                 SDL_TEXTUREACCESS_STREAMING,
                                 SCREENWIDTH, SCREENHEIGHT);
 
@@ -1580,7 +1730,7 @@ void I_GetScreenDimensions (void)
 	}
 
 	// [crispy] widescreen rendering makes no sense without aspect ratio correction
-	if (crispy->widescreen && aspect_ratio_correct)
+	if (crispy->widescreen && aspect_ratio_correct == 1)
 	{
 		switch(crispy->widescreen)
 		{
@@ -1608,6 +1758,16 @@ void I_GetScreenDimensions (void)
 	}
 
 	WIDESCREENDELTA = ((SCREENWIDTH - NONWIDEWIDTH) >> crispy->hires) / 2;
+}
+
+// [crispy] calls native SDL vsync toggle
+void I_ToggleVsync (void)
+{
+#if SDL_VERSION_ATLEAST(2, 0, 18)
+    SDL_RenderSetVSync(renderer, crispy->vsync);
+#else
+    I_ReInitGraphics(REINIT_RENDERER | REINIT_TEXTURES | REINIT_ASPECTRATIO);
+#endif
 }
 
 void I_InitGraphics(void)
@@ -1734,9 +1894,6 @@ void I_ReInitGraphics (int reinit)
 	// [crispy] re-set rendering resolution and re-create framebuffers
 	if (reinit & REINIT_FRAMEBUFFERS)
 	{
-		unsigned int rmask, gmask, bmask, amask;
-		int unused_bpp;
-
 		I_GetScreenDimensions();
 
 #ifndef CRISPY_TRUECOLOR
@@ -1749,21 +1906,23 @@ void I_ReInitGraphics (int reinit)
 
 #ifndef CRISPY_TRUECOLOR
 		SDL_FreeSurface(screenbuffer);
-		screenbuffer = SDL_CreateRGBSurface(0,
-				                    SCREENWIDTH, SCREENHEIGHT, 8,
-				                    0, 0, 0, 0);
-#endif
+		screenbuffer = SDL_CreateRGBSurface(
+			0, SCREENWIDTH, SCREENHEIGHT, 8,
+			0, 0, 0, 0);
 
+		// pixels and pitch will be filled with the texture's values
+		// in I_FinishUpdate()
 		SDL_FreeSurface(argbbuffer);
-		SDL_PixelFormatEnumToMasks(pixel_format, &unused_bpp,
-		                           &rmask, &gmask, &bmask, &amask);
-		argbbuffer = SDL_CreateRGBSurface(0,
-		                                  SCREENWIDTH, SCREENHEIGHT, 32,
-		                                  rmask, gmask, bmask, amask);
-#ifndef CRISPY_TRUECOLOR
+		argbbuffer = SDL_CreateRGBSurfaceWithFormatFrom(
+			NULL, SCREENWIDTH, SCREENHEIGHT, 0, 0, SDL_PIXELFORMAT_ARGB8888);
+
 		// [crispy] re-set the framebuffer pointer
 		I_VideoBuffer = screenbuffer->pixels;
 #else
+		SDL_FreeSurface(argbbuffer);
+		argbbuffer = SDL_CreateRGBSurfaceWithFormat(
+			0, SCREENWIDTH, SCREENHEIGHT, 32, SDL_PIXELFORMAT_ARGB8888);
+
 		I_VideoBuffer = argbbuffer->pixels;
 #endif
 		V_RestoreBuffer();
@@ -1804,7 +1963,7 @@ void I_ReInitGraphics (int reinit)
 		SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "nearest");
 
 		texture = SDL_CreateTexture(renderer,
-		                            pixel_format,
+		                            SDL_PIXELFORMAT_ARGB8888,
 		                            SDL_TEXTUREACCESS_STREAMING,
 		                            SCREENWIDTH, SCREENHEIGHT);
 
@@ -1952,51 +2111,8 @@ void I_BindVideoVariables(void)
 }
 
 #ifdef CRISPY_TRUECOLOR
-const pixel_t I_BlendAdd (const pixel_t bg, const pixel_t fg)
-{
-	uint32_t r, g, b;
-
-	if ((r = (fg & rmask) + (bg & rmask)) > rmask) r = rmask;
-	if ((g = (fg & gmask) + (bg & gmask)) > gmask) g = gmask;
-	if ((b = (fg & bmask) + (bg & bmask)) > bmask) b = bmask;
-
-	return amask | r | g | b;
-}
-
-// [crispy] http://stereopsis.com/doubleblend.html
-const pixel_t I_BlendDark (const pixel_t bg, const int d)
-{
-	const uint32_t ag = (bg & 0xff00ff00) >> 8;
-	const uint32_t rb =  bg & 0x00ff00ff;
-
-	uint32_t sag = d * ag;
-	uint32_t srb = d * rb;
-
-	sag = sag & 0xff00ff00;
-	srb = (srb >> 8) & 0x00ff00ff;
-
-	return amask | sag | srb;
-}
-
-const pixel_t I_BlendOver (const pixel_t bg, const pixel_t fg)
-{
-	const uint32_t r = ((blend_alpha * (fg & rmask) + (0xff - blend_alpha) * (bg & rmask)) >> 8) & rmask;
-	const uint32_t g = ((blend_alpha * (fg & gmask) + (0xff - blend_alpha) * (bg & gmask)) >> 8) & gmask;
-	const uint32_t b = ((blend_alpha * (fg & bmask) + (0xff - blend_alpha) * (bg & bmask)) >> 8) & bmask;
-
-	return amask | r | g | b;
-}
-
-const pixel_t (*blendfunc) (const pixel_t fg, const pixel_t bg) = I_BlendOver;
-
 const pixel_t I_MapRGB (const uint8_t r, const uint8_t g, const uint8_t b)
 {
-/*
-	return amask |
-	        (((r * rmask) >> 8) & rmask) |
-	        (((g * gmask) >> 8) & gmask) |
-	        (((b * bmask) >> 8) & bmask);
-*/
 	return SDL_MapRGB(argbbuffer->format, r, g, b);
 }
 #endif

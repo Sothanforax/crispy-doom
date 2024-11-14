@@ -21,7 +21,7 @@
 #include "i_sound.h"
 
 #define MAX_SND_DIST    2025
-#define MAX_CHANNELS    16
+#define MAX_CHANNELS    32
 
 // Music identifiers
 
@@ -312,5 +312,10 @@ typedef enum
     SFX_MYSTICINCANT,
     NUMSFX
 } sfxenum_t;
+
+
+extern sfxinfo_t S_sfx[];
+extern musicinfo_t S_music[];
+
 
 #endif

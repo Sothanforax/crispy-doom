@@ -72,9 +72,9 @@ typedef struct
 {
     thinkClass_t tClass;
     think_t thinkerFunc;
-    void (*writeFunc)();
-    void (*readFunc)();
-    void (*restoreFunc) ();
+    void (*writeFunc)(thinker_t *thinker);
+    void (*readFunc)(thinker_t *thinker);
+    void (*restoreFunc)(thinker_t *thinker);
     size_t size;
 } thinkInfo_t;
 
@@ -112,11 +112,10 @@ static void SetMobjArchiveNums(void);
 static void RemoveAllThinkers(void);
 static int GetMobjNum(mobj_t * mobj);
 static void SetMobjPtr(mobj_t **ptr, unsigned int archiveNum);
-static void RestoreSSThinker(ssthinker_t * sst);
-static void RestorePlatRaise(plat_t * plat);
-static void RestoreMoveCeiling(ceiling_t * ceiling);
+static void RestoreSSThinker(thinker_t *sst);
+static void RestorePlatRaise(thinker_t *thinker);
+static void RestoreMoveCeiling(thinker_t *thinker);
 static void AssertSegment(gameArchiveSegment_t segType);
-static void ClearSaveSlot(int slot);
 static void CopySaveSlot(int sourceSlot, int destSlot);
 static void CopyFile(char *sourceName, char *destName);
 static boolean ExistingFile(char *name);
@@ -309,6 +308,10 @@ static void StreamIn_pspdef_t(pspdef_t *str)
     // fixed_t sx, sy;
     str->sx = SV_ReadLong();
     str->sy = SV_ReadLong();
+
+    // [crispy] variable weapon sprite bob
+    str->sx2 = str->sx;
+    str->sy2 = str->sy;
 }
 
 static void StreamOut_pspdef_t(pspdef_t *str)
@@ -367,6 +370,9 @@ static void StreamIn_player_t(player_t *str)
 
     // fixed_t bob;
     str->bob = SV_ReadLong();
+
+    // [crispy] variable player view bob
+    str->bob2 = str->bob;
 
     // int flyheight;
     str->flyheight = SV_ReadLong();
@@ -1109,8 +1115,10 @@ static void StreamOut_mobj_t(mobj_t *str)
 // floormove_t
 //
 
-static void StreamIn_floormove_t(floormove_t *str)
+static void StreamIn_floormove_t(thinker_t *thinker)
 {
+    floormove_t *str = (floormove_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1166,8 +1174,10 @@ static void StreamIn_floormove_t(floormove_t *str)
     str->textureChange = SV_ReadByte();
 }
 
-static void StreamOut_floormove_t(floormove_t *str)
+static void StreamOut_floormove_t(thinker_t *thinker)
 {
+    floormove_t *str = (floormove_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1225,8 +1235,10 @@ static void StreamOut_floormove_t(floormove_t *str)
 // plat_t
 //
 
-static void StreamIn_plat_t(plat_t *str)
+static void StreamIn_plat_t(thinker_t *thinker)
 {
+    plat_t *str = (plat_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1267,8 +1279,10 @@ static void StreamIn_plat_t(plat_t *str)
     str->type = SV_ReadLong();
 }
 
-static void StreamOut_plat_t(plat_t *str)
+static void StreamOut_plat_t(thinker_t *thinker)
 {
+    plat_t *str = (plat_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1311,8 +1325,10 @@ static void StreamOut_plat_t(plat_t *str)
 // ceiling_t
 //
 
-static void StreamIn_ceiling_t(ceiling_t *str)
+static void StreamIn_ceiling_t(thinker_t *thinker)
 {
+    ceiling_t *str = (ceiling_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1345,8 +1361,10 @@ static void StreamIn_ceiling_t(ceiling_t *str)
     str->olddirection = SV_ReadLong();
 }
 
-static void StreamOut_ceiling_t(ceiling_t *str)
+static void StreamOut_ceiling_t(thinker_t *thinker)
 {
+    ceiling_t *str = (ceiling_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1381,8 +1399,10 @@ static void StreamOut_ceiling_t(ceiling_t *str)
 // light_t
 //
 
-static void StreamIn_light_t(light_t *str)
+static void StreamIn_light_t(thinker_t *thinker)
 {
+    light_t *str = (light_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1411,8 +1431,10 @@ static void StreamIn_light_t(light_t *str)
     str->count = SV_ReadLong();
 }
 
-static void StreamOut_light_t(light_t *str)
+static void StreamOut_light_t(thinker_t *thinker)
 {
+    light_t *str = (light_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1443,8 +1465,10 @@ static void StreamOut_light_t(light_t *str)
 // vldoor_t
 //
 
-static void StreamIn_vldoor_t(vldoor_t *str)
+static void StreamIn_vldoor_t(thinker_t *thinker)
 {
+    vldoor_t *str = (vldoor_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1473,8 +1497,10 @@ static void StreamIn_vldoor_t(vldoor_t *str)
     str->topcountdown = SV_ReadLong();
 }
 
-static void StreamOut_vldoor_t(vldoor_t *str)
+static void StreamOut_vldoor_t(thinker_t *thinker)
 {
+    vldoor_t *str = (vldoor_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1505,8 +1531,10 @@ static void StreamOut_vldoor_t(vldoor_t *str)
 // phase_t
 //
 
-static void StreamIn_phase_t(phase_t *str)
+static void StreamIn_phase_t(thinker_t *thinker)
 {
+    phase_t *str = (phase_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1523,8 +1551,10 @@ static void StreamIn_phase_t(phase_t *str)
     str->base = SV_ReadLong();
 }
 
-static void StreamOut_phase_t(phase_t *str)
+static void StreamOut_phase_t(thinker_t *thinker)
 {
+    phase_t *str = (phase_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1543,8 +1573,10 @@ static void StreamOut_phase_t(phase_t *str)
 // acs_t
 //
 
-static void StreamIn_acs_t(acs_t *str)
+static void StreamIn_acs_t(thinker_t *thinker)
 {
+    acs_t *str = (acs_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1596,8 +1628,10 @@ static void StreamIn_acs_t(acs_t *str)
     str->ip = SV_ReadLong();
 }
 
-static void StreamOut_acs_t(acs_t *str)
+static void StreamOut_acs_t(thinker_t *thinker)
 {
+    acs_t *str = (acs_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1652,8 +1686,10 @@ static void StreamOut_acs_t(acs_t *str)
 // polyevent_t
 //
 
-static void StreamIn_polyevent_t(polyevent_t *str)
+static void StreamIn_polyevent_t(thinker_t *thinker)
 {
+    polyevent_t *str = (polyevent_t *) thinker;
+
     // thinker_t thinker;
     StreamIn_thinker_t(&str->thinker);
 
@@ -1676,8 +1712,10 @@ static void StreamIn_polyevent_t(polyevent_t *str)
     str->ySpeed = SV_ReadLong();
 }
 
-static void StreamOut_polyevent_t(polyevent_t *str)
+static void StreamOut_polyevent_t(thinker_t *thinker)
 {
+    polyevent_t *str = (polyevent_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1705,8 +1743,10 @@ static void StreamOut_polyevent_t(polyevent_t *str)
 // pillar_t
 //
 
-static void StreamIn_pillar_t(pillar_t *str)
+static void StreamIn_pillar_t(thinker_t *thinker)
 {
+    pillar_t *str = (pillar_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1735,8 +1775,10 @@ static void StreamIn_pillar_t(pillar_t *str)
     str->crush = SV_ReadLong();
 }
 
-static void StreamOut_pillar_t(pillar_t *str)
+static void StreamOut_pillar_t(thinker_t *thinker)
 {
+    pillar_t *str = (pillar_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1767,8 +1809,10 @@ static void StreamOut_pillar_t(pillar_t *str)
 // polydoor_t
 //
 
-static void StreamIn_polydoor_t(polydoor_t *str)
+static void StreamIn_polydoor_t(thinker_t *thinker)
 {
+    polydoor_t *str = (polydoor_t *) thinker;
+
     // thinker_t thinker;
     StreamIn_thinker_t(&str->thinker);
 
@@ -1804,8 +1848,10 @@ static void StreamIn_polydoor_t(polydoor_t *str)
     str->close = SV_ReadLong();
 }
 
-static void StreamOut_polydoor_t(polydoor_t *str)
+static void StreamOut_polydoor_t(thinker_t *thinker)
 {
+    polydoor_t *str = (polydoor_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1846,8 +1892,10 @@ static void StreamOut_polydoor_t(polydoor_t *str)
 // floorWaggle_t
 //
 
-static void StreamIn_floorWaggle_t(floorWaggle_t *str)
+static void StreamIn_floorWaggle_t(thinker_t *thinker)
 {
+    floorWaggle_t *str = (floorWaggle_t *) thinker;
+
     int i;
 
     // thinker_t thinker;
@@ -1882,8 +1930,10 @@ static void StreamIn_floorWaggle_t(floorWaggle_t *str)
     str->state = SV_ReadLong();
 }
 
-static void StreamOut_floorWaggle_t(floorWaggle_t *str)
+static void StreamOut_floorWaggle_t(thinker_t *thinker)
 {
+    floorWaggle_t *str = (floorWaggle_t *) thinker;
+
     // thinker_t thinker;
     StreamOut_thinker_t(&str->thinker);
 
@@ -1929,7 +1979,7 @@ void SV_SaveGame(int slot, const char *description)
     unsigned int i;
 
     // Open the output file
-    M_snprintf(fileName, sizeof(fileName), "%shex6.hxs", SavePath);
+    M_snprintf(fileName, sizeof(fileName), "%shex%d.hxs", SavePath, BASE_SLOT);
     SV_OpenWrite(fileName);
 
     // Write game save description
@@ -1970,7 +2020,7 @@ void SV_SaveGame(int slot, const char *description)
     SV_SaveMap(true);           // true = save player info
 
     // Clear all save files at destination slot
-    ClearSaveSlot(slot);
+    SV_ClearSaveSlot(slot);
 
     // Copy base slot to destination slot
     CopySaveSlot(BASE_SLOT, slot);
@@ -1989,7 +2039,8 @@ void SV_SaveMap(boolean savePlayers)
     SavingPlayers = savePlayers;
 
     // Open the output file
-    M_snprintf(fileName, sizeof(fileName), "%shex6%02d.hxs", SavePath, gamemap);
+    M_snprintf(fileName, sizeof(fileName), "%shex%d%02d.hxs",
+                SavePath, BASE_SLOT, gamemap);
     SV_OpenWrite(fileName);
 
     // Place a header marker
@@ -2029,16 +2080,19 @@ void SV_LoadGame(int slot)
     char version_text[HXS_VERSION_TEXT_LENGTH];
     player_t playerBackup[MAXPLAYERS];
     mobj_t *mobj;
+    player_t *p; // [crispy]
+
+    p = &players[consoleplayer]; // [crispy]
 
     // Copy all needed save files to the base slot
     if (slot != BASE_SLOT)
     {
-        ClearSaveSlot(BASE_SLOT);
+        SV_ClearSaveSlot(BASE_SLOT);
         CopySaveSlot(slot, BASE_SLOT);
     }
 
     // Create the name
-    M_snprintf(fileName, sizeof(fileName), "%shex6.hxs", SavePath);
+    M_snprintf(fileName, sizeof(fileName), "%shex%d.hxs", SavePath, BASE_SLOT);
 
     // Load the file
     SV_OpenRead(fileName);
@@ -2097,16 +2151,26 @@ void SV_LoadGame(int slot)
     // Restore player structs
     inv_ptr = 0;
     curpos = 0;
+
     for (i = 0; i < maxplayers; i++)
     {
         mobj = players[i].mo;
         players[i] = playerBackup[i];
         players[i].mo = mobj;
-        if (i == consoleplayer)
+    }
+
+    // [crispy] point to active artifact after load
+    for (i = 0; i < p->inventorySlotNum; i++)
+    {
+        if (p->inventory[i].type == p->readyArtifact)
         {
-            players[i].readyArtifact = players[i].inventory[inv_ptr].type;
+            curpos = inv_ptr = i;
+            curpos = (curpos > CURPOS_MAX) ? CURPOS_MAX : curpos;
+            p->readyArtifact = p->inventory[inv_ptr].type;
+            break;
         }
     }
+
 }
 
 //==========================================================================
@@ -2119,7 +2183,7 @@ void SV_LoadGame(int slot)
 
 void SV_UpdateRebornSlot(void)
 {
-    ClearSaveSlot(REBORN_SLOT);
+    SV_ClearSaveSlot(REBORN_SLOT);
     CopySaveSlot(BASE_SLOT, REBORN_SLOT);
 }
 
@@ -2131,7 +2195,7 @@ void SV_UpdateRebornSlot(void)
 
 void SV_ClearRebornSlot(void)
 {
-    ClearSaveSlot(REBORN_SLOT);
+    SV_ClearSaveSlot(REBORN_SLOT);
 }
 
 //==========================================================================
@@ -2165,7 +2229,7 @@ void SV_MapTeleport(int map, int position)
         }
         else
         {                       // Entering new cluster - clear base slot
-            ClearSaveSlot(BASE_SLOT);
+            SV_ClearSaveSlot(BASE_SLOT);
         }
     }
 
@@ -2186,7 +2250,8 @@ void SV_MapTeleport(int map, int position)
     TargetPlayerAddrs = NULL;
 
     gamemap = map;
-    M_snprintf(fileName, sizeof(fileName), "%shex6%02d.hxs", SavePath, gamemap);
+    M_snprintf(fileName, sizeof(fileName),
+                "%shex%d%02d.hxs", SavePath, BASE_SLOT, gamemap);
     if (!deathmatch && ExistingFile(fileName))
     {                           // Unarchive map
         SV_LoadMap();
@@ -2357,7 +2422,8 @@ void SV_LoadMap(void)
     RemoveAllThinkers();
 
     // Create the name
-    M_snprintf(fileName, sizeof(fileName), "%shex6%02d.hxs", SavePath, gamemap);
+    M_snprintf(fileName, sizeof(fileName),
+                "%shex%d%02d.hxs", SavePath, BASE_SLOT, gamemap);
 
     // Load the file
     SV_OpenRead(fileName);
@@ -2390,7 +2456,7 @@ void SV_LoadMap(void)
 
 void SV_InitBaseSlot(void)
 {
-    ClearSaveSlot(BASE_SLOT);
+    SV_ClearSaveSlot(BASE_SLOT);
 }
 
 //==========================================================================
@@ -2889,8 +2955,9 @@ static void UnarchiveThinkers(void)
 //
 //==========================================================================
 
-static void RestoreSSThinker(ssthinker_t *sst)
+static void RestoreSSThinker(thinker_t *thinker)
 {
+    ssthinker_t *sst = (ssthinker_t *) thinker;
     sst->sector->specialdata = sst->thinker.function;
 }
 
@@ -2900,8 +2967,9 @@ static void RestoreSSThinker(ssthinker_t *sst)
 //
 //==========================================================================
 
-static void RestorePlatRaise(plat_t *plat)
+static void RestorePlatRaise(thinker_t *thinker)
 {
+    plat_t *plat = (plat_t *) thinker;
     plat->sector->specialdata = T_PlatRaise;
     P_AddActivePlat(plat);
 }
@@ -2912,8 +2980,9 @@ static void RestorePlatRaise(plat_t *plat)
 //
 //==========================================================================
 
-static void RestoreMoveCeiling(ceiling_t *ceiling)
+static void RestoreMoveCeiling(thinker_t *thinker)
 {
+    ceiling_t *ceiling = (ceiling_t *) thinker;
     ceiling->sector->specialdata = T_MoveCeiling;
     P_AddActiveCeiling(ceiling);
 }
@@ -3166,10 +3235,10 @@ static void UnarchivePolyobjs(void)
         {
             I_Error("UnarchivePolyobjs: Invalid polyobj tag");
         }
-        PO_RotatePolyobj(polyobjs[i].tag, (angle_t) SV_ReadLong());
+        PO_RotatePolyobj(polyobjs[i].tag, (angle_t) SV_ReadLong(), false);
         deltaX = SV_ReadLong() - polyobjs[i].startSpot.x;
         deltaY = SV_ReadLong() - polyobjs[i].startSpot.y;
-        PO_MovePolyobj(polyobjs[i].tag, deltaX, deltaY);
+        PO_MovePolyobj(polyobjs[i].tag, deltaX, deltaY, false);
     }
 }
 
@@ -3190,13 +3259,13 @@ static void AssertSegment(gameArchiveSegment_t segType)
 
 //==========================================================================
 //
-// ClearSaveSlot
+// SV_ClearSaveSlot
 //
 // Deletes all save game files associated with a slot number.
 //
 //==========================================================================
 
-static void ClearSaveSlot(int slot)
+void SV_ClearSaveSlot(int slot)
 {
     int i;
     char fileName[100];
@@ -3205,10 +3274,10 @@ static void ClearSaveSlot(int slot)
     {
         M_snprintf(fileName, sizeof(fileName),
                    "%shex%d%02d.hxs", SavePath, slot, i);
-        remove(fileName);
+        M_remove(fileName);
     }
     M_snprintf(fileName, sizeof(fileName), "%shex%d.hxs", SavePath, slot);
-    remove(fileName);
+    M_remove(fileName);
 }
 
 //==========================================================================
@@ -3268,7 +3337,7 @@ static void CopyFile(char *source_name, char *dest_name)
     FILE *read_handle, *write_handle;
     int buf_count, read_count, write_count;
 
-    read_handle = fopen(source_name, "rb");
+    read_handle = M_fopen(source_name, "rb");
     if (read_handle == NULL)
     {
         I_Error ("Couldn't read file %s", source_name);
@@ -3287,7 +3356,7 @@ static void CopyFile(char *source_name, char *dest_name)
         Z_Free(buffer);
     }
 
-    write_handle = fopen(dest_name, "wb");
+    write_handle = M_fopen(dest_name, "wb");
     if (write_handle == NULL)
     {
         I_Error ("Couldn't read file %s", dest_name);
@@ -3333,7 +3402,7 @@ static boolean ExistingFile(char *name)
 {
     FILE *fp;
 
-    if ((fp = fopen(name, "rb")) != NULL)
+    if ((fp = M_fopen(name, "rb")) != NULL)
     {
         fclose(fp);
         return true;
@@ -3352,7 +3421,7 @@ static boolean ExistingFile(char *name)
 
 static void SV_OpenRead(char *fileName)
 {
-    SavingFP = fopen(fileName, "rb");
+    SavingFP = M_fopen(fileName, "rb");
 
     // Should never happen, only if hex6.hxs cannot ever be created.
     if (SavingFP == NULL)
@@ -3363,7 +3432,7 @@ static void SV_OpenRead(char *fileName)
 
 static void SV_OpenWrite(char *fileName)
 {
-    SavingFP = fopen(fileName, "wb");
+    SavingFP = M_fopen(fileName, "wb");
 }
 
 //==========================================================================

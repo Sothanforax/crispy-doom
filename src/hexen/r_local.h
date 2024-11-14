@@ -38,15 +38,21 @@
 //
 // lighting constants
 //
-#define LIGHTLEVELS                     16
-#define LIGHTSEGSHIFT           4
-#define MAXLIGHTSCALE           48
-#define LIGHTSCALESHIFT         12
-#define MAXLIGHTZ                       128
-#define LIGHTZSHIFT                     20
-#define NUMCOLORMAPS            32      // number of diminishing
+// [crispy] parameterized for smooth diminishing lighting
+extern int LIGHTLEVELS;
+extern int LIGHTSEGSHIFT;
+extern int LIGHTBRIGHT;
+extern int MAXLIGHTSCALE;
+extern int LIGHTSCALESHIFT;
+extern int MAXLIGHTZ;
+extern int LIGHTZSHIFT;
+// [crispy] parameterized for smooth diminishing lighting
+extern int NUMCOLORMAPS;      // number of diminishing
 #define INVERSECOLORMAP         32
 
+#define LOOKDIRMIN 110 // [crispy] -110, actually
+#define LOOKDIRMAX 90
+#define LOOKDIRS (LOOKDIRMIN + 1 + LOOKDIRMAX) // [crispy] lookdir range: -110..0..90
 /*
 ==============================================================================
 
@@ -60,6 +66,7 @@
 typedef struct
 {
     fixed_t x, y;
+    fixed_t r_x, r_y; // [crispy] for rendering only
 } vertex_t;
 
 struct line_s;
@@ -82,6 +89,28 @@ typedef struct
     void *specialdata;          // thinker_t for reversable actions
     int linecount;
     struct line_s **lines;      // [linecount] size
+
+    // [crispy] WiggleFix: [kb] for R_FixWiggle()
+    int cachedheight;
+    int scaleindex;
+
+    // [AM] Previous position of floor and ceiling before
+    //      think.  Used to interpolate between positions.
+    fixed_t	oldfloorheight;
+    fixed_t	oldceilingheight;
+
+    // [AM] Gametic when the old positions were recorded.
+    //      Has a dual purpose; it prevents movement thinkers
+    //      from storing old positions twice in a tic, and
+    //      prevents the renderer from attempting to interpolate
+    //      if old values were not updated recently.
+    int         oldgametic;
+
+    // [AM] Interpolated floor and ceiling height.
+    //      Calculated once per tic and used inside
+    //      the renderer.
+    fixed_t	interpfloorheight;
+    fixed_t	interpceilingheight;
 } sector_t;
 
 typedef struct
@@ -90,6 +119,8 @@ typedef struct
     fixed_t rowoffset;          // add this to the calculated texture top
     short toptexture, bottomtexture, midtexture;
     sector_t *sector;
+    fixed_t basetextureoffset;  // [crispy] smooth texture scrolling
+    fixed_t baserowoffset;  // [crispy] smooth texture scrolling
 } side_t;
 
 typedef enum
@@ -143,10 +174,13 @@ typedef struct
     vertex_t *v1, *v2;
     fixed_t offset;
     angle_t angle;
+    angle_t r_angle; // [crispy] for rendering only
     side_t *sidedef;
     line_t *linedef;
     sector_t *frontsector;
     sector_t *backsector;       // NULL for one sided lines
+
+    uint32_t length; // [crispy] fix long wall wobble
 } seg_t;
 
 // ===== Polyobj data =====
@@ -165,6 +199,10 @@ typedef struct
     int seqType;
     fixed_t size;               // polyobj size (area of POLY_AREAUNIT == size of FRACUNIT)
     void *specialdata;          // pointer a thinker, if the poly is moving
+    fixed_t rx, ry;             // [crispy] remaining poly movement this tic
+    fixed_t dx, dy;             // [crispy] total poly movement this tic
+    angle_t rtheta;             // [crispy] remaining poly rotation this tic
+    angle_t dtheta;             // [crispy] total poly rotation this tic
 } polyobj_t;
 
 typedef struct polyblock_s
@@ -198,7 +236,7 @@ typedef struct
 ==============================================================================
 */
 
-typedef byte lighttable_t;      // this could be wider for >8 bit display
+typedef pixel_t lighttable_t;      // this could be wider for >8 bit display
 
 #define MAXVISPLANES    160*8
 #define MAXOPENINGS             MAXWIDTH*64*4
@@ -210,12 +248,13 @@ typedef struct
     int lightlevel;
     int special;
     int minx, maxx;
-    unsigned short pad1;                  // leave pads for [minx-1]/[maxx+1]
-    unsigned short top[MAXWIDTH];
-    unsigned short pad2;
-    unsigned short pad3;
-    unsigned short bottom[MAXWIDTH];
-    unsigned short pad4;
+	// leave pads for [minx-1]/[maxx+1]
+    unsigned int pad1;                  // [crispy] 32-bit integer math
+    unsigned int top[MAXWIDTH];			// [crispy] 32-bit integer math
+    unsigned int pad2;					// [crispy] 32-bit integer math
+    unsigned int pad3;					// [crispy] 32-bit integer math
+    unsigned int bottom[MAXWIDTH];		// [crispy] 32-bit integer math
+    unsigned int pad4;					// [crispy] 32-bit integer math
 } visplane_t;
 
 typedef struct drawseg_s
@@ -226,10 +265,11 @@ typedef struct drawseg_s
     int silhouette;             // 0=none, 1=bottom, 2=top, 3=both
     fixed_t bsilheight;         // don't clip sprites above this
     fixed_t tsilheight;         // don't clip sprites below this
-// pointers to lists for sprite clipping
-    short *sprtopclip;          // adjusted so [x1] is first value
-    short *sprbottomclip;       // adjusted so [x1] is first value
-    short *maskedtexturecol;    // adjusted so [x1] is first value
+	// pointers to lists for sprite clipping,
+	// all three adjusted so [x1] is first value.
+    int *sprtopclip;          // [crispy] 32-bit integer math
+    int *sprbottomclip;       // [crispy] 32-bit integer math
+    int *maskedtexturecol;    // [crispy] 32-bit integer math
 } drawseg_t;
 
 #define SIL_NONE        0
@@ -251,11 +291,16 @@ typedef struct vissprite_s
     fixed_t xiscale;            // negative if flipped
     fixed_t texturemid;
     int patch;
-    lighttable_t *colormap;
+    // [crispy] brightmaps for select sprites
+    lighttable_t *colormap[2];
+    const byte *brightmap;
     int mobjflags;              // for color translation and shadow draw
     boolean psprite;            // true if psprite
     int class;                  // player class (used in translation)
     fixed_t floorclip;
+#ifdef CRISPY_TRUECOLOR
+    const pixel_t (*blendfunc)(const pixel_t fg, const pixel_t bg);
+#endif
 } vissprite_t;
 
 
@@ -308,10 +353,20 @@ extern line_t *lines;
 extern int numsides;
 extern side_t *sides;
 
+// [crispy]
+typedef struct localview_s
+{
+    angle_t oldticangle;
+    angle_t ticangle;
+    short ticangleturn;
+    double rawangle;
+    angle_t angle;
+} localview_t;
 
 
 extern fixed_t viewx, viewy, viewz;
 extern angle_t viewangle;
+extern localview_t localview; // [crispy]
 extern player_t *viewplayer;
 
 
@@ -338,9 +393,9 @@ extern fixed_t projection;
 extern int validcount;
 
 extern int sscount, linecount, loopcount;
-extern lighttable_t *scalelight[LIGHTLEVELS][MAXLIGHTSCALE];
-extern lighttable_t *scalelightfixed[MAXLIGHTSCALE];
-extern lighttable_t *zlight[LIGHTLEVELS][MAXLIGHTZ];
+extern lighttable_t ***scalelight;
+extern lighttable_t  **scalelightfixed;
+extern lighttable_t ***zlight;
 
 extern int extralight;
 extern lighttable_t *fixedcolormap;
@@ -354,12 +409,49 @@ extern void (*basecolfunc) (void);
 extern void (*tlcolfunc) (void);
 extern void (*spanfunc) (void);
 
+// [crispy] smooth texture scrolling
+extern void R_InterpolateTextureOffsets (void);
+
 int R_PointOnSide(fixed_t x, fixed_t y, node_t * node);
 int R_PointOnSegSide(fixed_t x, fixed_t y, seg_t * line);
 angle_t R_PointToAngle(fixed_t x, fixed_t y);
+angle_t R_PointToAngleCrispy(fixed_t x, fixed_t y);
 angle_t R_PointToAngle2(fixed_t x1, fixed_t y1, fixed_t x2, fixed_t y2);
 fixed_t R_PointToDist(fixed_t x, fixed_t y);
 fixed_t R_ScaleFromGlobalAngle(angle_t visangle);
+
+inline static fixed_t LerpFixed(fixed_t oldvalue, fixed_t newvalue)
+{
+    return (oldvalue + FixedMul(newvalue - oldvalue, fractionaltic));
+}
+
+inline static int LerpInt(int oldvalue, int newvalue)
+{
+    return (oldvalue + (int)((newvalue - oldvalue) * FIXED2DOUBLE(fractionaltic)));
+}
+
+// [AM] Interpolate between two angles.
+inline static angle_t LerpAngle(angle_t oangle, angle_t nangle)
+{
+    if (nangle == oangle)
+        return nangle;
+    else if (nangle > oangle)
+    {
+        if (nangle - oangle < ANG270)
+            return oangle + (angle_t)((nangle - oangle) * FIXED2DOUBLE(fractionaltic));
+        else // Wrapped around
+            return oangle - (angle_t)((oangle - nangle) * FIXED2DOUBLE(fractionaltic));
+    }
+    else // nangle < oangle
+    {
+        if (oangle - nangle < ANG270)
+            return oangle - (angle_t)((oangle - nangle) * FIXED2DOUBLE(fractionaltic));
+        else // Wrapped around
+            return oangle + (angle_t)((nangle - oangle) * FIXED2DOUBLE(fractionaltic));
+    }
+}
+
+angle_t R_InterpolateAngle(angle_t oangle, angle_t nangle, fixed_t scale);
 subsector_t *R_PointInSubsector(fixed_t x, fixed_t y);
 //void R_AddPointToBox (int x, int y, fixed_t *box);
 
@@ -397,6 +489,8 @@ void R_RenderBSPNode(int bspnum);
 extern int rw_angle1;           // angle to line origin
 extern int TransTextureStart;
 extern int TransTextureEnd;
+extern lighttable_t **walllights;
+
 
 void R_RenderMaskedSegRange(drawseg_t * ds, int x1, int x2);
 
@@ -406,25 +500,33 @@ void R_RenderMaskedSegRange(drawseg_t * ds, int x1, int x2);
 typedef void (*planefunction_t) (int top, int bottom);
 extern planefunction_t floorfunc, ceilingfunc;
 
+extern fixed_t Sky1ColumnOffset;
+extern fixed_t Sky2ColumnOffset;
 extern int skyflatnum;
+extern boolean DoubleSky;
 
-extern short openings[MAXOPENINGS], *lastopening;
+extern int openings[MAXOPENINGS], *lastopening; // [crispy] 32-bit integer math
 
-extern short floorclip[MAXWIDTH];
-extern short ceilingclip[MAXWIDTH];
+extern int floorclip[MAXWIDTH]; // [crispy] 32-bit integer math
+extern int ceilingclip[MAXWIDTH]; // [crispy] 32-bit integer math
 
-extern fixed_t yslope[MAXHEIGHT];
+extern fixed_t *yslope;
+extern fixed_t yslopes[LOOKDIRS][MAXHEIGHT]; // [crispy]
 extern fixed_t distscale[MAXWIDTH];
 
 void R_InitPlanes(void);
 void R_ClearPlanes(void);
 void R_MapPlane(int y, int x1, int x2);
-void R_MakeSpans(int x, int t1, int b1, int t2, int b2);
+
+// [crispy] 32-bit integer math
+void R_MakeSpans(int x, unsigned int t1, unsigned int b1, unsigned int t2, unsigned int b2);
 void R_DrawPlanes(void);
 
 visplane_t *R_FindPlane(fixed_t height, int picnum, int lightlevel,
                         int special);
 visplane_t *R_CheckPlane(visplane_t * pl, int start, int stop);
+
+void R_InitSky(int map);
 
 
 //
@@ -448,7 +550,7 @@ extern fixed_t *textureheight;  // needed for texture pegging
 extern fixed_t *spritewidth;    // needed for pre rendering (fracs)
 extern fixed_t *spriteoffset;
 extern fixed_t *spritetopoffset;
-extern lighttable_t *colormaps;
+extern lighttable_t *colormaps, *pal_color;
 extern int firstflat;
 extern int numflats;
 
@@ -462,6 +564,9 @@ byte *R_GetColumn(int tex, int col);
 void R_InitData(void);
 void R_PrecacheLevel(void);
 
+#ifdef CRISPY_TRUECOLOR
+extern void R_InitTrueColormaps(char *current_colormap);
+#endif
 
 //
 // R_things.c
@@ -472,18 +577,19 @@ extern vissprite_t vissprites[MAXVISSPRITES], *vissprite_p;
 extern vissprite_t vsprsortedhead;
 
 // constant arrays used for psprite clipping and initializing clipping
-extern short negonearray[MAXWIDTH];
-extern short screenheightarray[MAXWIDTH];
+extern int negonearray[MAXWIDTH];  // [crispy] 32-bit integer math
+extern int screenheightarray[MAXWIDTH];  // [crispy] 32-bit integer math
 
 // vars for R_DrawMaskedColumn
-extern short *mfloorclip;
-extern short *mceilingclip;
+extern int *mfloorclip;  // [crispy] 32-bit integer math
+extern int *mceilingclip;  // [crispy] 32-bit integer math
 extern fixed_t spryscale;
-extern fixed_t sprtopscreen;
+extern int64_t sprtopscreen; // [crispy] WiggleFix
 extern fixed_t sprbotscreen;
 
 extern fixed_t pspritescale, pspriteiscale;
 
+extern boolean pspr_interp; // [crispy] interpolate weapon bobbing
 
 void R_DrawMaskedColumn(column_t * column, signed int baseclip);
 
@@ -504,14 +610,18 @@ void R_ClipVisSprite(vissprite_t * vis, int xl, int xh);
 //
 //=============================================================================
 
-extern lighttable_t *dc_colormap;
+extern lighttable_t *dc_colormap[2];
 extern int dc_x;
 extern int dc_yl;
 extern int dc_yh;
 extern fixed_t dc_iscale;
 extern fixed_t dc_texturemid;
-extern int dc_texheight; // [crispy]
 extern byte *dc_source;         // first pixel in a column
+extern pixel_t *ylookup[MAXHEIGHT];
+extern int columnofs[MAXWIDTH];
+extern int dc_texheight; // [crispy]
+extern const byte *dc_brightmap;
+
 
 void R_DrawColumn(void);
 void R_DrawColumnLow(void);

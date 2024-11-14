@@ -33,9 +33,10 @@
 #include "hu_lib.h"
 #include "m_controls.h"
 #include "m_misc.h"
+#include "m_menu.h"
 #include "w_wad.h"
 #include "m_argv.h" // [crispy] M_ParmExists()
-#include "st_stuff.h" // [crispy] ST_HEIGHT
+#include "st_stuff.h" // [crispy] ST_HEIGHT, ST_WIDESCREENDELTA
 #include "p_setup.h" // maplumpinfo
 
 #include "s_sound.h"
@@ -46,7 +47,7 @@
 #include "dstrings.h"
 #include "sounds.h"
 
-#include "r_state.h" // [crispy] colormaps
+#include "r_state.h" // [crispy] pal_color
 #include "v_video.h" // [crispy] V_DrawPatch() et al.
 #include "v_trans.h" // [crispy] colored kills/items/secret/etc. messages
 
@@ -112,11 +113,8 @@ static int		message_counter;
 static hu_stext_t	w_secret;
 static int		secret_counter;
 
-extern int		showMessages;
 
 static boolean		headsupactive = false;
-
-extern int		screenblocks; // [crispy]
 
 //
 // Builtin map names.
@@ -176,6 +174,17 @@ const char *mapnames[] =	// DOOM shareware/registered/retail (Ultimate) names.
     HUSTR_E5M7,
     HUSTR_E5M8,
     HUSTR_E5M9,
+
+    // [crispy] Sigil II
+    HUSTR_E6M1,
+    HUSTR_E6M2,
+    HUSTR_E6M3,
+    HUSTR_E6M4,
+    HUSTR_E6M5,
+    HUSTR_E6M6,
+    HUSTR_E6M7,
+    HUSTR_E6M8,
+    HUSTR_E6M9,
 
     "NEWLEVEL",
     "NEWLEVEL",
@@ -594,7 +603,7 @@ void HU_Start(void)
     if (headsupactive)
 	HU_Stop();
 
-    plr = &players[consoleplayer];
+    plr = &players[displayplayer];
     message_on = false;
     message_dontfuckwithme = false;
     message_nottobefuckedwith = false;
@@ -716,10 +725,10 @@ void HU_Start(void)
 
     // [crispy] explicitely display (episode and) map if the
     // map is from a PWAD or if the map title string has been dehacked
-    if (DEH_HasStringReplacement(s) ||
-        (!W_IsIWADLump(maplumpinfo) &&
-        !(crispy->havenerve && gamemission == pack_nerve) &&
-        !(crispy->havemaster && gamemission == pack_master)))
+    if (!W_IsIWADLump(maplumpinfo) &&
+        (DEH_HasStringReplacement(s) ||
+        (!(crispy->havenerve && gamemission == pack_nerve) &&
+        !(crispy->havemaster && gamemission == pack_master))))
     {
 	char *m;
 
@@ -773,12 +782,12 @@ void HU_DemoProgressBar (void)
 //  V_DrawHorizLine(0, SCREENHEIGHT - 2, 1, 4); // [crispy] white start
 //  V_DrawHorizLine(i - 1, SCREENHEIGHT - 2, 1, 4); // [crispy] white end
 #else
-//  V_DrawHorizLine(0, SCREENHEIGHT - 3, i, colormaps[4]); // [crispy] white
-    V_DrawHorizLine(0, SCREENHEIGHT - 2, i, colormaps[0]); // [crispy] black
-    V_DrawHorizLine(0, SCREENHEIGHT - 1, i, colormaps[4]); // [crispy] white
+//  V_DrawHorizLine(0, SCREENHEIGHT - 3, i, pal_color[4]); // [crispy] white
+    V_DrawHorizLine(0, SCREENHEIGHT - 2, i, pal_color[0]); // [crispy] black
+    V_DrawHorizLine(0, SCREENHEIGHT - 1, i, pal_color[4]); // [crispy] white
 
-//  V_DrawHorizLine(0, SCREENHEIGHT - 2, 1, colormaps[4]); // [crispy] white start
-//  V_DrawHorizLine(i - 1, SCREENHEIGHT - 2, 1, colormaps[4]); // [crispy] white end
+//  V_DrawHorizLine(0, SCREENHEIGHT - 2, 1, pal_color[4]); // [crispy] white start
+//  V_DrawHorizLine(i - 1, SCREENHEIGHT - 2, 1, pal_color[4]); // [crispy] white end
 #endif
 }
 
@@ -791,7 +800,7 @@ static void HU_DrawCrosshair (void)
 
     if (weaponinfo[plr->readyweapon].ammo == am_noammo ||
         plr->playerstate != PST_LIVE ||
-        automapactive ||
+        (automapactive && !crispy->automapoverlay) ||
         menuactive ||
         paused ||
         secret_on)
@@ -855,7 +864,12 @@ void HU_Drawer(void)
 	HUlib_drawTextLine(&w_title, false);
     }
 
-    if (crispy->automapstats == WIDGETS_ALWAYS || (automapactive && crispy->automapstats == WIDGETS_AUTOMAP))
+    if (crispy->automapstats == WIDGETS_STBAR && (!automapactive || w_title.y != HU_TITLEY))
+    {
+	HUlib_drawTextLine(&w_kills, false);
+    }
+    else
+    if ((crispy->automapstats & WIDGETS_ALWAYS) || (automapactive && crispy->automapstats == WIDGETS_AUTOMAP))
     {
 	// [crispy] move obtrusive line out of player view
 	if (automapactive && (!crispy->automapoverlay || screenblocks < CRISPY_HUD - 1))
@@ -929,28 +943,28 @@ void HU_Erase(void)
 static void Crispy_Statsline_Ratio (char *str, int str_size, const char *prefix, int count, int total, int extra)
 {
 	if (extra)
-	    M_snprintf(str, str_size, "%s%s%s%d/%d+%d", cr_stat, prefix, crstr[CR_GRAY],
+	    M_snprintf(str, str_size, "%s%s%s%d/%d+%d ", cr_stat, prefix, crstr[CR_GRAY],
 	               count, total, extra);
 	else
-	    M_snprintf(str, str_size, "%s%s%s%d/%d", cr_stat, prefix, crstr[CR_GRAY],
+	    M_snprintf(str, str_size, "%s%s%s%d/%d ", cr_stat, prefix, crstr[CR_GRAY],
 	               count, total);
 }
 
 static void Crispy_Statsline_Remaining (char *str, int str_size, const char *prefix, int count, int total, int extra)
 {
-	M_snprintf(str, str_size, "%s%s%s%d", cr_stat, prefix, crstr[CR_GRAY],
+	M_snprintf(str, str_size, "%s%s%s%d ", cr_stat, prefix, crstr[CR_GRAY],
 		   MAX(0, total - count));
 }
 
 static void Crispy_Statsline_Percent (char *str, int str_size, const char *prefix, int count, int total, int extra)
 {
-	M_snprintf(str, str_size, "%s%s%s%d%%", cr_stat, prefix, crstr[CR_GRAY],
+	M_snprintf(str, str_size, "%s%s%s%d%% ", cr_stat, prefix, crstr[CR_GRAY],
 		   count * 100 / (total ? total : 1));
 }
 
 static void Crispy_Statsline_Boolean (char *str, int str_size, const char *prefix, int count, int total, int extra)
 {
-	M_snprintf(str, str_size, "%s%s%s%s", cr_stat, prefix, crstr[CR_GRAY],
+	M_snprintf(str, str_size, "%s%s%s%s ", cr_stat, prefix, crstr[CR_GRAY],
 		   count >= total ? "Yes" : "No");
 }
 
@@ -1014,6 +1028,8 @@ void HU_Ticker(void)
 
     } // else message_on = false;
 
+    w_kills.y = HU_MSGY + 1 * 8;
+
     // check for incoming chat characters
     if (netgame)
     {
@@ -1053,6 +1069,20 @@ void HU_Ticker(void)
 		players[i].cmd.chatchar = 0;
 	    }
 	}
+    // [crispy] shift widgets one line down so chat typing line may appear
+    if (crispy->automapstats != WIDGETS_STBAR)
+    {
+        const int chat_line = chat_on ? 8 : 0;
+
+        w_kills.y = HU_MSGY + 1 * 8 + chat_line;
+        w_items.y = HU_MSGY + 2 * 8 + chat_line;
+        w_scrts.y = HU_MSGY + 3 * 8 + chat_line;
+        // [crispy] do not shift level time widget if no stats widget is used
+        w_ltime.y = HU_MSGY + 4 * 8 + (crispy->automapstats ? chat_line : 0);
+        w_coordx.y = HU_MSGY + 1 * 8 + chat_line;
+        w_coordy.y = HU_MSGY + 2 * 8 + chat_line;
+        w_coorda.y = HU_MSGY + 3 * 8 + chat_line;
+    }
     }
 
     if (automapactive)
@@ -1064,9 +1094,37 @@ void HU_Ticker(void)
 	    w_title.y = HU_TITLEY;
     }
 
-    if (crispy->automapstats == WIDGETS_ALWAYS || (automapactive && crispy->automapstats == WIDGETS_AUTOMAP))
+    if (crispy->automapstats == WIDGETS_STBAR && (!automapactive || w_title.y != HU_TITLEY))
     {
 	crispy_statsline_func_t crispy_statsline = crispy_statslines[crispy->statsformat];
+
+	w_kills.x = - ST_WIDESCREENDELTA;
+
+	w_kills.y = HU_TITLEY;
+
+	crispy_statsline(str, sizeof(str), "K ", plr->killcount, totalkills, extrakills);
+	HUlib_clearTextLine(&w_kills);
+	s = str;
+	while (*s)
+	    HUlib_addCharToTextLine(&w_kills, *(s++));
+
+	crispy_statsline(str, sizeof(str), "I ", plr->itemcount, totalitems, 0);
+	s = str;
+	while (*s)
+	    HUlib_addCharToTextLine(&w_kills, *(s++));
+
+	crispy_statsline(str, sizeof(str), "S ", plr->secretcount, totalsecret, 0);
+	s = str;
+	while (*s)
+	    HUlib_addCharToTextLine(&w_kills, *(s++));
+    }
+    else
+    if ((crispy->automapstats & WIDGETS_ALWAYS) || (automapactive && crispy->automapstats == WIDGETS_AUTOMAP))
+    {
+
+	crispy_statsline_func_t crispy_statsline = crispy_statslines[crispy->statsformat];
+
+	w_kills.x = HU_TITLEX; // to handle switching from Status bar to Always and Automap kills line options
 
 	crispy_statsline(str, sizeof(str), kills, plr->killcount, totalkills, extrakills);
 	HUlib_clearTextLine(&w_kills);
@@ -1242,12 +1300,12 @@ boolean HU_Responder(event_t *ev)
 	    message_counter = HU_MSGTIMEOUT;
 	    eatkey = true;
 	}
-	else if (netgame && ev->data2 == key_multi_msg)
+	else if (netgame && !demoplayback && ev->data2 == key_multi_msg)
 	{
 	    eatkey = true;
             StartChatInput(HU_BROADCAST);
 	}
-	else if (netgame && numplayers > 2)
+	else if (netgame && !demoplayback && numplayers > 2)
 	{
 	    for (i=0; i<MAXPLAYERS ; i++)
 	    {

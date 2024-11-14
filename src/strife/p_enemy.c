@@ -187,7 +187,13 @@ static void P_WakeUpThing(mobj_t* puncher, mobj_t* bystander)
     {
         bystander->target = puncher;
         if(bystander->info->seesound)
+        {
             S_StartSound(bystander, bystander->info->seesound);
+
+            // [crispy] make seesounds uninterruptible
+            if (crispy->soundfull)
+                S_UnlinkSound(bystander);
+        }
         P_SetMobjState(bystander, bystander->info->seestate);
     }
 }
@@ -383,8 +389,6 @@ boolean P_CheckRobotRange(mobj_t *actor)
 fixed_t	xspeed[8] = {FRACUNIT,47000,0,-47000,-FRACUNIT,-47000,0,47000};
 fixed_t yspeed[8] = {0,47000,FRACUNIT,47000,0,-47000,-FRACUNIT,-47000};
 
-extern	line_t*	spechit[];
-extern	int	numspechit;
 
 boolean P_Move (mobj_t*	actor)
 {
@@ -712,8 +716,6 @@ void P_NewRandomDir(mobj_t* actor)
     } // end else
 }
 
-// haleyjd 09/05/10: Needed below.
-extern void P_BulletSlope (mobj_t *mo);
 
 //
 // P_LookForPlayers
@@ -735,6 +737,7 @@ P_LookForPlayers
     angle_t     an;
     fixed_t     dist;
     mobj_t  *   master = players[actor->miscdata].mo;
+    int consecutive_missing = 0; // for breaking infinite loop
 
     // haleyjd 09/05/10: handle Allies
     if(actor->flags & MF_ALLY)
@@ -792,19 +795,39 @@ P_LookForPlayers
 
     c = 0;
 
-    // NOTE: This behavior has been changed from the Vanilla behavior, where
-    // an infinite loop can occur if players 0-3 all quit the game. Although
-    // technically this is not what Vanilla does, fixing this is highly
-    // desirable, and having the game simply lock up is not acceptable.
-    // stop = (actor->lastlook - 1) & 3;
-    // for (;; actor->lastlook = (actor->lastlook + 1) & 3)
+    // The 3 below is probably a mistake (it should be MAXPLAYERS - 1, or 7)
+    // and in vanilla this can potentially cause an infinite loop in
+    // multiplayer. Unfortunately we can't correct the mistake - doing so will
+    // cause desyncs. Upon spawning, each enemy's lastlook is initialized to a
+    // random value between 0 and 7 (i.e MAXPLAYERS - 1). There's a chance
+    // that the first call of this function for that enemy will return early
+    // courtesy of the actor->lastlook == stop condition. In a single-player
+    // game this occurs when (actor->lastlook - 1) & 3 equals 0, or when
+    // lastlook equals 1 or 5.
 
-    stop = (actor->lastlook + MAXPLAYERS - 1) % MAXPLAYERS;
+    // If you use MAXPLAYERS - 1, it has the side effect of altering which
+    // enemies are affected by an early actor->lastlook == stop return. Now it
+    // happens when (actor->lastlook - 1) & 7 equals 0, or when lastlook equals
+    // 1, *not* 1 and 5 as above.
 
-    for ( ; ; actor->lastlook = (actor->lastlook + 1) % MAXPLAYERS)
+    stop = (actor->lastlook-1)&3;
+
+    for ( ; ; actor->lastlook = (actor->lastlook+1)&3 )
     {
         if (!playeringame[actor->lastlook])
+        {
+            // Break the vanilla infinite loop here. It can occur if there are
+            // > 4 players and players 0 - 3 all quit the game. Error out
+            // instead.
+            if (consecutive_missing == 4)
+            {
+                I_Error("P_LookForPlayers: No player 1 - 4.\n");
+            }
+            consecutive_missing++;
             continue;
+        }
+
+        consecutive_missing = 0;
 
         if (c++ == 2
             || actor->lastlook == stop)
@@ -905,7 +928,15 @@ seeyou:
         if (actor->type == MT_INQUISITOR)
             emitter = NULL;
 
-        S_StartSound (emitter, sound);
+        // [crispy] prevent from adding up volume
+        if (crispy->soundfull && actor->type == MT_INQUISITOR)
+            S_StartSoundOnce(NULL, sound);
+        else
+            S_StartSound(emitter, sound);
+
+        // [crispy] make seesounds uninterruptible
+        if (crispy->soundfull)
+            S_UnlinkSound(actor);
     }
 
     // [STRIFE] Set threshold (kinda odd as it's still set to 0 above...)
@@ -935,7 +966,7 @@ void A_RandomWalk(mobj_t* actor)
         {
             int delta;
 
-            actor->angle &= (7 << 29);
+            actor->angle &= (7u << 29);
             delta = actor->angle - (actor->movedir << 29);
 
             if(delta < 0)
@@ -1066,7 +1097,7 @@ void A_Chase (mobj_t*	actor)
     // turn towards movement direction if not there yet
     if (actor->movedir < 8)
     {
-        actor->angle &= (7<<29);
+        actor->angle &= (7u << 29);
         delta = actor->angle - (actor->movedir << 29);
 
         if (delta > 0)
@@ -2237,7 +2268,11 @@ void A_Scream(mobj_t* actor)
 
     // Check for bosses.
     if(actor->type == MT_ENTITY || actor->type == MT_INQUISITOR)
-        S_StartSound(NULL, actor->info->deathsound);   // full volume
+    {
+        // [crispy] prevent from adding up volume
+        crispy->soundfull ? S_StartSoundOnce(NULL, actor->info->deathsound)
+                          : S_StartSound(NULL, actor->info->deathsound);
+    }
     else
         S_StartSound(actor, actor->info->deathsound);
 }
@@ -3284,7 +3319,27 @@ void A_ActiveSound(mobj_t* actor)
 {
     if(actor->info->activesound)
     {
-        if(!(leveltime & 7)) // haleyjd: added parens
+        int soundtime = leveltime; // [crispy]
+
+        // [crispy] fix ambient sounds to play consistently (haleyjd)
+        if (crispy->soundfix)
+        {
+            switch (actor->type)
+            {
+                case MT_MISC_03: // [crispy] thing 103: floor water drip
+                case MT_MISC_13: // [crispy] thing 104: water splash
+                case MT_MISC_07: // [crispy] thing 112: fountain
+                case MT_TREE7:   // [crispy] thing 215: stick in water
+                    soundtime -= (leveltime % actor->tics);
+                    break;
+
+                default:
+                    break;
+            }
+        }
+
+        // [crispy] use soundtime
+        if(!(soundtime & 7)) // haleyjd: added parens
             S_StartSound(actor, actor->info->activesound);
     }
 }

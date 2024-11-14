@@ -27,6 +27,9 @@
 #include "p_local.h"
 #include "s_sound.h"
 #include "v_video.h"
+#include "i_swap.h" // [crispy] LONG()
+#include "w_wad.h"
+#include "r_swirl.h"
 
 // Macros
 
@@ -180,7 +183,7 @@ int *AmbientSfx[] = {
     AmbSndSeq10                 // FastFootsteps
 };
 
-animdef_t animdefs[] = {
+animdef_t animdefs_vanilla[] = {
     // false = flat
     // true = texture
     {false, "FLTWAWA3", "FLTWAWA1", 8}, // Water
@@ -194,8 +197,10 @@ animdef_t animdefs[] = {
     {-1}
 };
 
-anim_t anims[MAXANIMS];
-anim_t *lastanim;
+// [crispy] remove MAXANIMS limit
+anim_t* anims;
+anim_t* lastanim;
+static size_t maxanims;
 
 int *TerrainTypes;
 struct
@@ -213,10 +218,6 @@ struct
 };
 
 mobj_t LavaInflictor;
-
-// [AM] Fractional part of the current tic, in the half-open
-//      range of [0.0, 1.0).  Used for interpolation.
-extern fixed_t          fractionaltic;
 
 //----------------------------------------------------------------------------
 //
@@ -267,10 +268,31 @@ void P_InitPicAnims(void)
     const char *startname;
     const char *endname;
     int i;
+    boolean init_swirl = false;
+    // [crispy] add support for ANIMATED lumps
+    animdef_t *animdefs;
+    const boolean from_lump = (W_CheckNumForName("ANIMATED") != -1);
+
+    if (from_lump)
+    {
+        animdefs = W_CacheLumpName("ANIMATED", PU_STATIC);
+    }
+    else
+    {
+        animdefs = animdefs_vanilla;
+    }
 
     lastanim = anims;
     for (i = 0; animdefs[i].istexture != -1; i++)
     {
+        // [crispy] remove MAXANIMS limit
+        if (lastanim >= anims + maxanims)
+        {
+            size_t newmax = maxanims ? 2 * maxanims : MAXANIMS;
+            anims = I_Realloc(anims, newmax * sizeof(*anims));
+            lastanim = anims + maxanims;
+            maxanims = newmax;
+        }
         startname = DEH_String(animdefs[i].startname);
         endname = DEH_String(animdefs[i].endname);
 
@@ -294,13 +316,29 @@ void P_InitPicAnims(void)
         }
         lastanim->istexture = animdefs[i].istexture;
         lastanim->numpics = lastanim->picnum - lastanim->basepic + 1;
+        lastanim->speed = from_lump ? LONG(animdefs[i].speed) : animdefs[i].speed;
+        // [crispy] add support for SMMU swirling flats
+        if (lastanim->speed > 65535 || lastanim->numpics == 1)
+        {
+                init_swirl = true;
+        }
+        else
         if (lastanim->numpics < 2)
         {
-            I_Error("P_InitPicAnims: bad cycle from %s to %s",
-                    startname, endname);
-        }
-        lastanim->speed = animdefs[i].speed;
+            // [crispy] make non-fatal, skip invalid animation sequences
+            fprintf (stderr, "P_InitPicAnims: bad cycle from %s to %s\n",
+                     startname, endname);
+            continue;
+        }        
         lastanim++;
+    }
+    if (from_lump)
+    {
+        W_ReleaseLumpName("ANIMATED");
+    }
+    if (init_swirl)
+    {
+        R_InitDistortedFlats();
     }
 }
 
@@ -853,8 +891,8 @@ void P_ShootSpecialLine(mobj_t * thing, line_t * line)
 
 void P_PlayerInSpecialSector(player_t * player)
 {
-    extern boolean messageson;
     sector_t *sector;
+    static sector_t *error; // [crispy] for sectors with unknown special
     static int pushTab[5] = {
         2048 * 5,
         2048 * 10,
@@ -977,8 +1015,14 @@ void P_PlayerInSpecialSector(player_t * player)
             break;
 
         default:
-            I_Error("P_PlayerInSpecialSector: "
-                    "unknown special %i", sector->special);
+            // [crispy] ignore unknown special sectors
+            if (error != sector)
+            {
+                error = sector;
+                printf("P_PlayerInSpecialSector: "
+                       "unknown special %i\n", sector->special);
+            }
+            break;
     }
 }
 
@@ -1011,6 +1055,12 @@ void P_UpdateSpecials(void)
             }
             else
             {
+                // [crispy] add support for SMMU swirling flats
+                if (anim->speed > 65535 || anim->numpics == 1)
+                {
+                    flattranslation[i] = -1;
+                }
+                else
                 flattranslation[i] = pic;
             }
         }
@@ -1036,7 +1086,7 @@ void P_UpdateSpecials(void)
         }
     }
     // Handle buttons
-    for (i = 0; i < MAXBUTTONS; i++)
+    for (i = 0; i < maxbuttons; i++)
     {
         if (buttonlist[i].btimer)
         {
@@ -1238,6 +1288,7 @@ void P_SpawnSpecials(void)
     //
     numlinespecials = 0;
     for (i = 0; i < numlines; i++)
+    {
         switch (lines[i].special)
         {
             case 48:           // Effect_Scroll_Left
@@ -1245,7 +1296,22 @@ void P_SpawnSpecials(void)
                 linespeciallist[numlinespecials] = &lines[i];
                 numlinespecials++;
                 break;
+            // [crispy] add support for MBF sky transfers
+            case 271:
+            case 272:
+              {
+                int secnum;
+                for (secnum = 0; secnum < numsectors; secnum++)
+                  {
+                    if (sectors[secnum].tag == lines[i].tag)
+                        {
+                            sectors[secnum].sky = i | PL_SKYFLAT;
+                        }
+                  }
+              }
+             break;
         }
+    }
 
     //
     //      Init other misc stuff
@@ -1254,7 +1320,7 @@ void P_SpawnSpecials(void)
         activeceilings[i] = NULL;
     for (i = 0; i < MAXPLATS; i++)
         activeplats[i] = NULL;
-    for (i = 0; i < MAXBUTTONS; i++)
+    for (i = 0; i < maxbuttons; i++)
         memset(&buttonlist[i], 0, sizeof(button_t));
 }
 
